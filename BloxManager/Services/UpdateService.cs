@@ -12,7 +12,7 @@ namespace BloxManager.Services
     public interface IUpdateService
     {
         Task<(bool hasUpdate, string current, string latest, string downloadUrl)> CheckForUpdateAsync(string owner, string repo);
-        Task<string?> DownloadLatestAsync(string downloadUrl, string fileNameHint = "BloxManager_Update.exe");
+        Task<string?> DownloadLatestAsync(string downloadUrl, IProgress<double>? progress = null, string fileNameHint = "BloxManager_Update.exe");
     }
     
     public class UpdateService : IUpdateService
@@ -70,7 +70,7 @@ namespace BloxManager.Services
             }
         }
 
-        public async Task<string?> DownloadLatestAsync(string downloadUrl, string fileNameHint = "BloxManager_Update.exe")
+        public async Task<string?> DownloadLatestAsync(string downloadUrl, IProgress<double>? progress = null, string fileNameHint = "BloxManager_Update.exe")
         {
             try
             {
@@ -80,10 +80,31 @@ namespace BloxManager.Services
                 var fileName = Path.GetFileName(new Uri(downloadUrl).AbsolutePath);
                 if (string.IsNullOrWhiteSpace(fileName)) fileName = fileNameHint;
                 var targetPath = Path.Combine(targetDir, fileName);
+
                 using var http = new HttpClient();
-                using var s = await http.GetStreamAsync(downloadUrl);
-                using var f = File.Create(targetPath);
-                await s.CopyToAsync(f);
+                using var response = await http.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead);
+                response.EnsureSuccessStatusCode();
+
+                var totalBytes = response.Content.Headers.ContentLength;
+                using var contentStream = await response.Content.ReadAsStreamAsync();
+                using var fileStream = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.None, 8192, true);
+
+                var buffer = new byte[8192];
+                var totalRead = 0L;
+                int bytesRead;
+
+                while ((bytesRead = await contentStream.ReadAsync(buffer, 0, buffer.Length)) != 0)
+                {
+                    await fileStream.WriteAsync(buffer, 0, bytesRead);
+                    totalRead += bytesRead;
+
+                    if (totalBytes.HasValue)
+                    {
+                        var percentage = (double)totalRead / totalBytes.Value * 100;
+                        progress?.Report(percentage);
+                    }
+                }
+
                 return targetPath;
             }
             catch (Exception ex)

@@ -159,7 +159,14 @@ namespace BloxManager.ViewModels
         private string _statusMessage = string.Empty;
 
         [ObservableProperty]
+        private double _downloadProgress;
+
+        [ObservableProperty]
+        private bool _showUpdateProgress;
+
+        [ObservableProperty]
         private string _backgroundImagePath = string.Empty;
+
 
         [ObservableProperty]
         private string _backgroundImageDimensions = string.Empty;
@@ -367,41 +374,91 @@ namespace BloxManager.ViewModels
         }
 
         [RelayCommand]
-        private async Task CheckForUpdatesAsync()
+        public async Task CheckForUpdatesAsync()
+        {
+            await RunUpdateCheckAsync(false);
+        }
+
+        public async Task CheckForUpdateOnStartupAsync()
+        {
+            if (CheckForUpdates)
+            {
+                await RunUpdateCheckAsync(true);
+            }
+        }
+
+        private async Task RunUpdateCheckAsync(bool isStartup)
         {
             try
             {
-                IsLoading = true;
-                StatusMessage = "Checking for updates...";
+                if (!isStartup)
+                {
+                    IsLoading = true;
+                    StatusMessage = "Checking for updates...";
+                }
+
                 var owner = await _settingsService.GetSettingAsync<string>("UpdateRepoOwner") ?? "JakeBx99";
                 var repo  = await _settingsService.GetSettingAsync<string>("UpdateRepoName")  ?? "Um";
                 var updater = App.GetService<IUpdateService>();
                 var (hasUpdate, current, latest, downloadUrl) = await updater.CheckForUpdateAsync(owner, repo);
+
                 if (!hasUpdate)
                 {
-                    StatusMessage = $"You are up to date (current {current}).";
+                    if (!isStartup)
+                        StatusMessage = $"You are up to date (current {current}).";
                     return;
                 }
-                StatusMessage = $"Update available: {latest} (current {current}). Downloading...";
-                var path = await updater.DownloadLatestAsync(downloadUrl);
-                if (!string.IsNullOrEmpty(path))
+
+                bool shouldDownload = !isStartup;
+
+                if (isStartup)
                 {
-                    StatusMessage = $"Downloaded update to: {path}";
-                    try { System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{path}\""); } catch { }
+                    var result = System.Windows.MessageBox.Show(
+                        $"A new update is available: {latest}\nCurrent version: {current}\n\nWould you like to download it now?",
+                        "Update Available",
+                        System.Windows.MessageBoxButton.YesNo,
+                        System.Windows.MessageBoxImage.Information);
+                    
+                    if (result == System.Windows.MessageBoxResult.Yes)
+                    {
+                        shouldDownload = true;
+                    }
                 }
-                else
+
+                if (shouldDownload)
                 {
-                    StatusMessage = "Failed to download update.";
+                    ShowUpdateProgress = true;
+                    DownloadProgress = 0;
+                    StatusMessage = $"Update available: {latest} (current {current}). Downloading...";
+                    
+                    var progress = new Progress<double>(p => DownloadProgress = p);
+                    var path = await updater.DownloadLatestAsync(downloadUrl, progress);
+                    
+                    if (!string.IsNullOrEmpty(path))
+                    {
+                        StatusMessage = $"Downloaded update to: {path}";
+                        try { System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{path}\""); } catch { }
+                    }
+                    else
+                    {
+                        StatusMessage = "Failed to download update.";
+                    }
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Update check failed");
-                StatusMessage = "Update check failed";
+                if (!isStartup)
+                    StatusMessage = "Update check failed";
             }
             finally
             {
                 IsLoading = false;
+                ShowUpdateProgress = false;
+                if (isStartup && StatusMessage == "Checking for updates...")
+                {
+                     StatusMessage = "Ready";
+                }
             }
         }
 

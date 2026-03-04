@@ -33,6 +33,8 @@ namespace BloxManager.Views
             StateChanged += MainWindow_StateChanged;
             Loaded += MainWindow_Loaded;
             DataContextChanged += MainWindow_DataContextChanged;
+            
+            _ = viewModel.SettingsViewModel.CheckForUpdateOnStartupAsync();
         }
 
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
