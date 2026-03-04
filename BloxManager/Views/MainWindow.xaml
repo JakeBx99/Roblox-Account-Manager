@@ -10,6 +10,7 @@
          WindowStyle="SingleBorderWindow"
          AllowsTransparency="False"
          ResizeMode="CanMinimize"
+         Topmost="{Binding SettingsViewModel.AlwaysOnTop}"
          Background="{StaticResource BackgroundMainBrush}"
          TextElement.Foreground="{StaticResource TextPrimaryBrush}"
         TextOptions.TextFormattingMode="Ideal"
@@ -685,7 +686,7 @@
                 </ScrollViewer>
 
                 <!-- Selection Rectangle Overlay -->
-                <Canvas x:Name="SelectionCanvas" IsHitTestVisible="False" Opacity="0.7">
+                <Canvas x:Name="SelectionCanvas" Grid.Row="1" IsHitTestVisible="False" Opacity="0.7" ClipToBounds="True">
                     <Rectangle x:Name="SelectionRectangle" 
                                Fill="#332196F3" 
                                Stroke="#FF2196F3" 

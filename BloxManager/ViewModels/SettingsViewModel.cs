@@ -108,6 +108,15 @@ namespace BloxManager.ViewModels
         }
 
         [ObservableProperty]
+        private bool _alwaysOnTop;
+
+        partial void OnAlwaysOnTopChanged(bool value)
+        {
+            _ = _settingsService.SetSettingAsync("AlwaysOnTop", value);
+        }
+
+
+        [ObservableProperty]
         private string _placeId = string.Empty;
 
         partial void OnPlaceIdChanged(string value)
@@ -334,7 +343,9 @@ namespace BloxManager.ViewModels
                 MinimizeToTray = await _settingsService.GetSettingAsync<bool>("MinimizeToTray");
                 StartWithWindows = await _settingsService.GetSettingAsync<bool>("StartWithWindows");
                 CheckForUpdates = await _settingsService.GetSettingAsync<bool>("CheckForUpdates");
+                AlwaysOnTop = await _settingsService.GetSettingAsync<bool>("AlwaysOnTop");
                 SelectedLanguage = await _settingsService.GetSettingAsync<string>("SelectedLanguage") ?? "en";
+
                 
                 BackgroundImagePath = await _settingsService.GetSettingAsync<string>("BackgroundImagePath") ?? string.Empty;
                 BackgroundImageStretch = await _settingsService.GetSettingAsync<string>("BackgroundImageStretch") ?? "UniformToFill";

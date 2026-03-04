@@ -146,8 +146,13 @@
                                                             <CheckBox Content="Developer Mode" IsChecked="{Binding DeveloperModeEnabled}" Margin="0,0,0,16"/>
                                                             <CheckBox Content="Auto-refresh Cookies" IsChecked="{Binding AutoRefreshCookies}" Margin="0,0,0,16"/>
                                                             <CheckBox Content="Minimize to Tray" IsChecked="{Binding MinimizeToTray}" Margin="0,0,0,16"/>
-                                                            <CheckBox Content="Auto Update" IsChecked="{Binding CheckForUpdates}" Margin="0,0,0,6"/>
+                                                            <CheckBox Content="Auto Update" IsChecked="{Binding CheckForUpdates}" Margin="0,0,0,16"/>
+                                                            <CheckBox Content="Always on Top" IsChecked="{Binding AlwaysOnTop}" Margin="0,0,0,16"/>
+                                                            <Button Style="{StaticResource PrimaryActionButton}" Command="{Binding CheckForUpdatesCommand}" Margin="0,0,0,16">
+                                                                <TextBlock Text="Check for Updates" FontSize="11"/>
+                                                            </Button>
                                                             <Button Style="{StaticResource PrimaryActionButton}" Command="{Binding OpenErrorLogsFileCommand}" Margin="0,8,0,0">
+
                                                                 <TextBlock Text="View Error Logs" FontSize="11"/>
                                                             </Button>
                                                             <Button Style="{StaticResource SecondaryActionButton}" Command="{Binding ClearLogsCommand}" Margin="0,16,0,0" Visibility="{Binding DeveloperModeEnabled, Converter={StaticResource BoolToVisibilityConverter}}">
