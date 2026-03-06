@@ -3,6 +3,7 @@ using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace BloxManager.Services
@@ -15,6 +16,7 @@ namespace BloxManager.Services
         private readonly string _settingsFilePath;
 
         private bool _isLoaded = false;
+        private readonly SemaphoreSlim _settingsIoLock = new(1, 1);
 
         public SettingsService(ILogger<SettingsService> logger, IEncryptionService encryptionService)
         {
@@ -224,10 +226,16 @@ namespace BloxManager.Services
             _settings["JobId"] = string.Empty;
             _settings["LaunchData"] = string.Empty;
             _settings["LowMemoryMode"] = true;
+            _settings["AltAccountBackgroundColor"] = string.Empty; 
+            _settings["AltAccountOpacity"] = 100.0;
+            _settings["GroupBackgroundColor"] = string.Empty;
+            _settings["GroupOpacity"] = 100.0;
+            _settings["CustomTextColor"] = "#FFFFFF"; // White default
         }
 
         private async Task LoadSettingsAsync()
         {
+            await _settingsIoLock.WaitAsync();
             try
             {
                 if (!File.Exists(_settingsFilePath))
@@ -257,19 +265,43 @@ namespace BloxManager.Services
                 _logger.LogError(ex, "Failed to load settings");
                 LoadDefaultSettings();
             }
+            finally
+            {
+                _settingsIoLock.Release();
+            }
         }
 
         private async Task SaveSettingsAsync()
         {
+            await _settingsIoLock.WaitAsync();
             try
             {
                 var json = JsonConvert.SerializeObject(_settings, Formatting.Indented);
                 var encrypted = await _encryptionService.EncryptAsync(json);
-                await File.WriteAllTextAsync(_settingsFilePath, encrypted);
+
+                var dir = Path.GetDirectoryName(_settingsFilePath);
+                if (!string.IsNullOrEmpty(dir))
+                    Directory.CreateDirectory(dir);
+
+                var tmpPath = _settingsFilePath + ".tmp";
+                await File.WriteAllTextAsync(tmpPath, encrypted);
+
+                if (File.Exists(_settingsFilePath))
+                {
+                    File.Replace(tmpPath, _settingsFilePath, null);
+                }
+                else
+                {
+                    File.Move(tmpPath, _settingsFilePath);
+                }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to save settings");
+            }
+            finally
+            {
+                _settingsIoLock.Release();
             }
         }
     }

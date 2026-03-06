@@ -188,51 +188,59 @@ namespace BloxManager.Services
         {
             try
             {
-                if (string.IsNullOrEmpty(account.BrowserTrackerId)) return false;
+                // We need the authentication ticket to reliably identify the process
+                // If the account doesn't have a security token, we can't identify its process
+                if (string.IsNullOrEmpty(account.SecurityToken)) return false;
 
-                // Use WMI to find RobloxPlayerBeta.exe processes and check their command line for the BrowserTrackerId
+                // Get the authentication ticket for the account
+                var authTicket = await _robloxService.GetAuthenticationTicketAsync(account.SecurityToken);
+                if (string.IsNullOrEmpty(authTicket)) return false;
+
+                // Use WMI to find RobloxPlayerBeta.exe processes and check their command line
                 using var searcher = new ManagementObjectSearcher(
                     $"SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name = 'RobloxPlayerBeta.exe'");
                 
                 using var objects = searcher.Get();
-                var processes = Process.GetProcessesByName("RobloxPlayerBeta");
-
+                
                 foreach (ManagementObject obj in objects)
                 {
                     string commandLine = obj["CommandLine"]?.ToString() ?? string.Empty;
                     if (string.IsNullOrEmpty(commandLine)) continue;
+
+                    // Ignore the second roblox process which would cause 268 (Unexpected client behavior) kicks if it were closed.
+                    // This is a common pattern in RAM.
+                    if (commandLine.StartsWith("\\??\\")) continue; 
                     
-                    var pidObj = obj["ProcessId"];
-                    if (pidObj == null) continue;
-                    int pid = Convert.ToInt32(pidObj);
+                    // Check if this process was ran with an authentication ticket and a joinScript
+                    // The -t argument is the authentication ticket
+                    // The -j argument is the join script URL
+                    bool hasAuthTicket = commandLine.IndexOf($"-t {authTicket}", StringComparison.OrdinalIgnoreCase) >= 0;
+                    bool hasJoinScript = commandLine.IndexOf("-j ", StringComparison.OrdinalIgnoreCase) >= 0;
 
-                    bool hasLauncher = commandLine.IndexOf("placelauncherurl", StringComparison.OrdinalIgnoreCase) >= 0;
-                    if (!hasLauncher) continue;
+                    if (hasAuthTicket && hasJoinScript)
+                    {
+                        var pidObj = obj["ProcessId"];
+                        if (pidObj == null) continue;
+                        int pid = Convert.ToInt32(pidObj);
 
-                    var id = System.Text.RegularExpressions.Regex.Escape(account.BrowserTrackerId);
-                    var patterns = new[]
-                    {
-                        $@"browsertrackerid:\s*{id}",
-                        $@"browserTrackerId=\s*{id}"
-                    };
-                    foreach (var pattern in patterns)
-                    {
-                        if (System.Text.RegularExpressions.Regex.IsMatch(commandLine, pattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                        var p = Process.GetProcesses().FirstOrDefault(x => x.Id == pid);
+                        if (p != null)
                         {
-                            var p = processes.FirstOrDefault(x => x.Id == pid);
-                            if (p != null)
+                            try
                             {
-                                try
+                                // If process has no main window handle and has been running for > 30s, it's a hung ghost process.
+                                // This is a heuristic to avoid false positives for crashed processes.
+                                if (p.MainWindowHandle == IntPtr.Zero && (DateTime.Now - p.StartTime).TotalSeconds > 30)
                                 {
-                                    // If process has no main window handle and has been running for > 30s, it's a hung ghost process.
-                                    if (p.MainWindowHandle == IntPtr.Zero && (DateTime.Now - p.StartTime).TotalSeconds > 30)
-                                    {
-                                        continue;
-                                    }
+                                    _logger.LogWarning($"Found potential ghost process for account {account.Username} (PID: {pid}). Ignoring.");
+                                    continue;
                                 }
-                                catch { } // Ignore access denied on StartTime
-                                return true;
                             }
+                            catch (Exception ex)
+                            {
+                                _logger.LogWarning(ex, $"Could not get StartTime for process {pid}. Assuming it's valid.");
+                            }
+                            return true; // Found a running process for this account
                         }
                     }
                 }
@@ -250,22 +258,48 @@ namespace BloxManager.Services
         {
             try
             {
-                var processes = Process.GetProcessesByName("RobloxPlayerBeta");
-                foreach (var process in processes)
+                // We need the authentication ticket to reliably identify the process to stop
+                if (string.IsNullOrEmpty(account.SecurityToken)) return false;
+
+                var authTicket = await _robloxService.GetAuthenticationTicketAsync(account.SecurityToken);
+                if (string.IsNullOrEmpty(authTicket)) return false;
+
+                using var searcher = new ManagementObjectSearcher(
+                    $"SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name = 'RobloxPlayerBeta.exe'");
+                
+                using var objects = searcher.Get();
+
+                foreach (ManagementObject obj in objects)
                 {
-                    try
+                    string commandLine = obj["CommandLine"]?.ToString() ?? string.Empty;
+                    if (string.IsNullOrEmpty(commandLine)) continue;
+
+                    if (commandLine.IndexOf($"-t {authTicket}", StringComparison.OrdinalIgnoreCase) >= 0)
                     {
-                        process.Kill();
-                        process.WaitForExit();
-                    }
-                    catch
-                    {
-                        // Ignore if process is already terminating
+                        var pidObj = obj["ProcessId"];
+                        if (pidObj == null) continue;
+                        int pid = Convert.ToInt32(pidObj);
+
+                        var p = Process.GetProcesses().FirstOrDefault(x => x.Id == pid);
+                        if (p != null)
+                        {
+                            try
+                            {
+                                p.Kill();
+                                await p.WaitForExitAsync(); // Use async version
+                                _logger.LogInformation($"Stopped Roblox process for account {account.Username} (PID: {pid})");
+                                return true;
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex, $"Failed to kill process {pid} for account {account.Username}");
+                            }
+                        }
                     }
                 }
 
-                _logger.LogInformation($"Stopped Roblox processes for account {account.Username}");
-                return true;
+                _logger.LogInformation($"No Roblox process found to stop for account {account.Username}");
+                return false;
             }
             catch (Exception ex)
             {

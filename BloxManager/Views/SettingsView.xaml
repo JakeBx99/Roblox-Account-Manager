@@ -146,14 +146,7 @@
                                                             <CheckBox Content="Developer Mode" IsChecked="{Binding DeveloperModeEnabled}" Margin="0,0,0,16"/>
                                                             <CheckBox Content="Auto-refresh Cookies" IsChecked="{Binding AutoRefreshCookies}" Margin="0,0,0,16"/>
                                                             <CheckBox Content="Minimize to Tray" IsChecked="{Binding MinimizeToTray}" Margin="0,0,0,16"/>
-                                                            <CheckBox Content="Auto Update" IsChecked="{Binding CheckForUpdates}" Margin="0,0,0,16"/>
                                                             <CheckBox Content="Always on Top" IsChecked="{Binding AlwaysOnTop}" Margin="0,0,0,16"/>
-                                                            <Button Style="{StaticResource PrimaryActionButton}" Command="{Binding CheckForUpdatesCommand}" Margin="0,0,0,8">
-                                                                <TextBlock Text="Check for Updates" FontSize="11"/>
-                                                            </Button>
-                                                            <ProgressBar Value="{Binding DownloadProgress}" Height="4" Margin="0,0,0,16" 
-                                                                         Visibility="{Binding ShowUpdateProgress, Converter={StaticResource BoolToVisibilityConverter}}"
-                                                                         Foreground="{StaticResource PrimaryAccentBrush}" Background="#20FFFFFF" BorderThickness="0"/>
                                                             <Button Style="{StaticResource PrimaryActionButton}" Command="{Binding OpenErrorLogsFileCommand}" Margin="0,8,0,0">
 
 
@@ -187,22 +180,22 @@
                                                                 <RowDefinition Height="Auto"/>
                                                             </Grid.RowDefinitions>
 
-                                                            <TextBlock Grid.Row="0" Text="Place ID" VerticalAlignment="Center" Margin="0,0,0,12" Foreground="{StaticResource TextSecondaryBrush}"/>
-                                                            <StackPanel Grid.Row="0" Grid.Column="1" Margin="0,0,0,12">
+                                                            <TextBlock Grid.Row="0" Text="Place ID" VerticalAlignment="Center" Margin="0,0,0,8" Foreground="{StaticResource TextSecondaryBrush}" FontSize="12"/>
+                                                            <StackPanel Grid.Row="0" Grid.Column="1" Margin="0,0,0,8">
                                                                 <TextBox Style="{StaticResource Input}" Text="{Binding PlaceId, UpdateSourceTrigger=PropertyChanged}" Tag="Place ID"/>
-                                                                <TextBlock Text="{Binding GameName}" Margin="4,4,0,0" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" FontWeight="SemiBold"/>
+                                                                <TextBlock Text="{Binding GameName}" Margin="4,2,0,0" FontSize="10" Foreground="{StaticResource TextSecondaryBrush}" FontWeight="SemiBold"/>
                                                             </StackPanel>
 
-                                                            <TextBlock Grid.Row="1" Text="Job ID" VerticalAlignment="Center" Margin="0,0,0,12" Foreground="{StaticResource TextSecondaryBrush}"/>
-                                                            <TextBox Grid.Row="1" Grid.Column="1" Style="{StaticResource Input}" Text="{Binding JobId}" Margin="0,0,0,12" Tag="Job ID"/>
+                                                            <TextBlock Grid.Row="1" Text="Job ID" VerticalAlignment="Center" Margin="0,0,0,8" Foreground="{StaticResource TextSecondaryBrush}" FontSize="12"/>
+                                                            <TextBox Grid.Row="1" Grid.Column="1" Style="{StaticResource Input}" Text="{Binding JobId}" Margin="0,0,0,8" Tag="Job ID"/>
 
-                                                            <TextBlock Grid.Row="2" Text="Launch Data" VerticalAlignment="Center" Foreground="{StaticResource TextSecondaryBrush}"/>
+                                                            <TextBlock Grid.Row="2" Text="Launch Data" VerticalAlignment="Center" Foreground="{StaticResource TextSecondaryBrush}" FontSize="12"/>
                                                             <TextBox Grid.Row="2" Grid.Column="1" Style="{StaticResource Input}" Text="{Binding LaunchData}" Tag="Launch Data"/>
                                                             
-                                                            <TextBlock Grid.Row="3" Text="Join Interval (s)" VerticalAlignment="Center" Margin="0,12,0,0" Foreground="{StaticResource TextSecondaryBrush}"/>
-                                                            <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" Margin="0,12,0,0">
-                                                                <TextBox Style="{StaticResource Input}" Width="120" Text="{Binding JoinDelaySeconds}" Tag="Join Delay"/>
-                                                                <TextBlock Text=" Set delay between account launches (0 = instant)" Margin="8,4,0,0" FontSize="11" Foreground="{StaticResource TextMutedBrush}"/>
+                                                            <TextBlock Grid.Row="3" Text="Join Interval (s)" VerticalAlignment="Center" Margin="0,8,0,0" Foreground="{StaticResource TextSecondaryBrush}" FontSize="12"/>
+                                                            <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" Margin="0,8,0,0">
+                                                                <TextBox Style="{StaticResource Input}" Width="80" Text="{Binding JoinDelaySeconds}" Tag="Join Delay"/>
+                                                                <TextBlock Text=" Launch delay (0 = instant)" Margin="8,2,0,0" FontSize="10" Foreground="{StaticResource TextMutedBrush}" VerticalAlignment="Center"/>
                                                             </StackPanel>
                                                         </Grid>
                                                     </ContentControl>
@@ -216,6 +209,52 @@
                                         <Setter Property="Content">
                                             <Setter.Value>
                                                 <StackPanel>
+                                                    <!-- Account & Group Customization -->
+                                                    <ContentControl Style="{StaticResource SettingsCard}">
+                                                        <StackPanel>
+                                                            <TextBlock Text="Colors &amp; Transparency" FontSize="14" FontWeight="Bold" Margin="0,0,0,12" Foreground="{StaticResource TextPrimaryBrush}"/>
+                                                            
+                                                            <Grid Margin="0,0,0,12">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="130"/>
+                                                                    <ColumnDefinition Width="*"/>
+                                                                    <ColumnDefinition Width="Auto"/>
+                                                                </Grid.ColumnDefinitions>
+                                                                <Grid.RowDefinitions>
+                                                                    <RowDefinition Height="Auto"/>
+                                                                    <RowDefinition Height="Auto"/>
+                                                                    <RowDefinition Height="Auto"/>
+                                                                    <RowDefinition Height="Auto"/>
+                                                                </Grid.RowDefinitions>
+
+                                                                <TextBlock Grid.Row="0" Text="Alt Account Color" Style="{StaticResource SectionHeader}" FontSize="12"/>
+                                                                <TextBox Grid.Row="0" Grid.Column="1" Style="{StaticResource Input}" Text="{Binding AltAccountBackgroundColor}" Tag="#HEX Color"/>
+                                                                
+                                                                <TextBlock Grid.Row="1" Text="Alt Account Opacity" Style="{StaticResource SectionHeader}" Margin="0,8,0,0" FontSize="12"/>
+                                                                <Slider Grid.Row="1" Grid.Column="1" Style="{StaticResource ModernSlider}" Minimum="0" Maximum="100" Value="{Binding AltAccountOpacity}" VerticalAlignment="Center" Margin="0,8,0,0"/>
+                                                                <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding AltAccountOpacity, StringFormat={}{0:F0}%}" FontSize="10" Foreground="{StaticResource PrimaryAccentBrush}" VerticalAlignment="Center" Margin="8,8,0,0"/>
+
+                                                                <TextBlock Grid.Row="2" Text="Group Color" Style="{StaticResource SectionHeader}" Margin="0,12,0,0" FontSize="12"/>
+                                                                <TextBox Grid.Row="2" Grid.Column="1" Style="{StaticResource Input}" Text="{Binding GroupBackgroundColor}" Tag="#HEX Color" Margin="0,12,0,0"/>
+                                                                
+                                                                <TextBlock Grid.Row="3" Text="Group Opacity" Style="{StaticResource SectionHeader}" Margin="0,8,0,0" FontSize="12"/>
+                                                                <Slider Grid.Row="3" Grid.Column="1" Style="{StaticResource ModernSlider}" Minimum="0" Maximum="100" Value="{Binding GroupOpacity}" VerticalAlignment="Center" Margin="0,8,0,0"/>
+                                                                <TextBlock Grid.Row="3" Grid.Column="2" Text="{Binding GroupOpacity, StringFormat={}{0:F0}%}" FontSize="10" Foreground="{StaticResource PrimaryAccentBrush}" VerticalAlignment="Center" Margin="8,8,0,0"/>
+                                                            </Grid>
+
+                                                            <Separator Background="{StaticResource GlassBorderBrush}" Margin="0,4,0,12"/>
+
+                                                            <Grid>
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="130"/>
+                                                                    <ColumnDefinition Width="*"/>
+                                                                </Grid.ColumnDefinitions>
+                                                                <TextBlock Text="Text Color" Style="{StaticResource SectionHeader}" FontSize="12"/>
+                                                                <TextBox Grid.Column="1" Style="{StaticResource Input}" Text="{Binding CustomTextColor}" Tag="#HEX Color"/>
+                                                            </Grid>
+                                                        </StackPanel>
+                                                    </ContentControl>
+
                                                     <!-- Background Image Section -->
 
                                                     <!-- Background Image Path -->

@@ -13,8 +13,8 @@ namespace BloxManager.Services
     {
         private readonly ILogger<AccountService> _logger;
         private readonly IEncryptionService _encryptionService;
-        private readonly IRobloxService _robloxService;
         private readonly ISettingsService _settingsService;
+        private readonly IRobloxService _robloxService;
         private readonly IBrowserService _browserService;
         
         private List<Account> _accounts = new();
@@ -23,14 +23,14 @@ namespace BloxManager.Services
         public AccountService(
             ILogger<AccountService> logger,
             IEncryptionService encryptionService,
-            IRobloxService robloxService,
             ISettingsService settingsService,
+            IRobloxService robloxService,
             IBrowserService browserService)
         {
             _logger = logger;
             _encryptionService = encryptionService;
-            _robloxService = robloxService;
             _settingsService = settingsService;
+            _robloxService = robloxService;
             _browserService = browserService;
             
             var appDataPath = AppDomain.CurrentDomain.BaseDirectory;
@@ -47,10 +47,34 @@ namespace BloxManager.Services
             return _accounts.ToList();
         }
 
-        public async Task<Account?> GetAccountAsync(string id)
+        public async Task RefreshAccountAvatarAsync(Account account)
+        {
+            if (account.UserId == 0) return;
+
+            try
+            {
+                var avatarUrl = await _robloxService.GetUserAvatarUrlAsync(account.UserId);
+                if (!string.IsNullOrEmpty(avatarUrl) && account.AvatarUrl != avatarUrl)
+                {
+                    account.AvatarUrl = avatarUrl;
+                    await SaveAccountsAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Failed to refresh avatar for account {account.Username}");
+            }
+        }
+
+        public async Task<Account?> GetAccountById(string accountId)
         {
             var accounts = await GetAccountsAsync();
-            return accounts.FirstOrDefault(a => a.Id == id);
+            return accounts.FirstOrDefault(a => a.Id == accountId);
+        }
+
+        public async Task<Account?> GetAccountAsync(string id)
+        {
+            return await GetAccountById(id);
         }
 
         public async Task AddAccountAsync(Account account)
@@ -116,8 +140,8 @@ namespace BloxManager.Services
                     var loginResult = await _robloxService.LoginAsync(account.Username, account.Password);
                     if (loginResult != null)
                     {
-                        account.SecurityToken = loginResult.SecurityToken;
                         account.UserId = loginResult.UserId;
+                        account.SecurityToken = loginResult.SecurityToken;
                         account.IsValid = true;
                         return true;
                     }
@@ -127,8 +151,6 @@ namespace BloxManager.Services
             {
                 _logger.LogError(ex, $"Failed to validate account {account.Username}");
             }
-
-            account.IsValid = false;
             return false;
         }
 
@@ -260,8 +282,6 @@ namespace BloxManager.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Failed to refresh account {account.Username}");
-                account.IsValid = false;
-                await SaveAccountsAsync();
             }
         }
 

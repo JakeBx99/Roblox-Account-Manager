@@ -13,10 +13,12 @@ namespace BloxManager.Services
         Task<List<Server>> GetServersAsync(long placeId, int limit = 100);
         Task<Game?> GetGameInfoAsync(long placeId);
         Task<UserPresence?> GetUserPresenceAsync(long userId);
+        Task<Dictionary<long, UserPresence>> GetUsersPresenceAsync(IEnumerable<long> userIds);
         Task<bool> JoinGameAsync(Account account, long placeId, string? jobId = null, string? launchData = null);
         Task<bool> JoinServerAsync(Account account, long placeId, string serverId);
         Task<string?> GetAuthenticationTicketAsync(string cookie);
         Task<bool> ValidateCookieAsync(string cookie);
+        Task<bool> TestCsrfTokenAsync(string cookie);
         Task RefreshCookieAsync(Account account);
         Task<bool> IsGamePassOwnedAsync(long userId, long gamePassId);
         Task<string?> GetUserAvatarUrlAsync(long userId);

@@ -19,13 +19,35 @@ namespace BloxManager.Logging
             Directory.CreateDirectory(_logsDir);
             _filePathResolver = () => Path.Combine(_logsDir, $"{DateTime.Now:yyyy-MM-dd}.log");
             _errorsPath = Path.Combine(_logsDir, "error_logs.txt");
+
+            WriteSessionHeader();
+        }
+
+        private void WriteSessionHeader()
+        {
+            try
+            {
+                var sb = new StringBuilder();
+                sb.AppendLine("====================================================================================");
+                sb.AppendLine($"SESSION START: {DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}");
+                sb.AppendLine($"OS: {Environment.OSVersion}");
+                sb.AppendLine($".NET Version: {Environment.Version}");
+                sb.AppendLine($"Processor Count: {Environment.ProcessorCount}");
+                sb.AppendLine($"Process ID: {Environment.ProcessId}");
+                sb.AppendLine($"Base Directory: {AppDomain.CurrentDomain.BaseDirectory}");
+                sb.AppendLine("====================================================================================");
+                
+                lock (_lock)
+                {
+                    File.AppendAllText(_errorsPath, sb.ToString());
+                }
+            }
+            catch { }
         }
 
         public ILogger CreateLogger(string categoryName) => new FileLogger(categoryName, _filePathResolver, _lock, _errorsPath);
 
-        public void Dispose() 
-        {
-        }
+        public void Dispose() { }
 
         private class FileLogger : ILogger
         {
@@ -51,13 +73,18 @@ namespace BloxManager.Logging
                 {
                     var message = formatter(state, exception);
                     var sb = new StringBuilder();
-                    sb.Append(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"));
-                    sb.Append(" [").Append(logLevel).Append("] ");
-                    sb.Append(_category).Append(": ").Append(message);
+                    sb.Append(DateTime.Now.ToString("HH:mm:ss.fff")).Append(" | ");
+                    sb.Append(logLevel.ToString().ToUpper().PadRight(11)).Append(" | ");
+                    sb.Append($"[{Thread.CurrentThread.ManagedThreadId:D2}]").Append(" | ");
+                    sb.Append(_category).Append(" | ");
+                    sb.Append(message);
+
                     if (exception != null)
                     {
                         sb.AppendLine();
-                        sb.Append(exception);
+                        sb.AppendLine("--- EXCEPTION DETAILS ---");
+                        sb.AppendLine(exception.ToString());
+                        sb.AppendLine("-------------------------");
                     }
 
                     lock (_lock)
@@ -65,10 +92,7 @@ namespace BloxManager.Logging
                         File.AppendAllText(_errorsPath, sb.ToString() + Environment.NewLine);
                     }
                 }
-                catch
-                {
-                    // swallow logging errors
-                }
+                catch { }
             }
         }
 

@@ -5,6 +5,7 @@ using Newtonsoft.Json.Linq;
 using RestSharp;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -100,18 +101,25 @@ namespace BloxManager.Services
                     _rbxMultiMutex = new Mutex(true, "ROBLOX_singletonMutex");
 
                     if (!_rbxMultiMutex.WaitOne(TimeSpan.Zero, true))
+                    {
+                        _logger.LogWarning("UpdateMultiRoblox: Could not acquire ROBLOX_singletonMutex. Multi-instance might not work.");
                         return false;
+                    }
+                    _logger.LogInformation("UpdateMultiRoblox: Successfully acquired ROBLOX_singletonMutex.");
                 }
                 else if (!enabled && _rbxMultiMutex != null)
                 {
+                    _rbxMultiMutex.ReleaseMutex();
                     _rbxMultiMutex.Close();
                     _rbxMultiMutex = null;
+                    _logger.LogInformation("UpdateMultiRoblox: Released ROBLOX_singletonMutex.");
                 }
 
                 return true;
             }
-            catch
+            catch (Exception ex)
             {
+                _logger.LogError(ex, "UpdateMultiRoblox: Error handling mutex");
                 return false;
             }
         }
@@ -289,11 +297,8 @@ namespace BloxManager.Services
                 var settingsService = App.GetService<ISettingsService>();
                 var multiRobloxEnabled = await settingsService.GetMultiRobloxEnabledAsync();
                 
-                if (!UpdateMultiRoblox(multiRobloxEnabled))
-                {
-                    _logger.LogWarning("LaunchRoblox: Failed to update multi-Roblox mutex for account {Username}", account.Username);
-                    return false;
-                }
+                // Try to update mutex but don't block launch if it fails (user might already have Multi-Roblox handled)
+                UpdateMultiRoblox(multiRobloxEnabled);
 
                 var authTicket = await GetAuthenticationTicketAsync(account.SecurityToken);
                 if (string.IsNullOrEmpty(authTicket))
@@ -311,8 +316,20 @@ namespace BloxManager.Services
                 }
 
                 var launcherUrl = jobId != null
-                    ? $"https://assetgame.roblox.com/game/PlaceLauncher.ashx?request=RequestGameJob&placeId={placeId}&gameId={jobId}&browserTrackerId={account.BrowserTrackerId}"
-                    : $"https://assetgame.roblox.com/game/PlaceLauncher.ashx?request=RequestGame&placeId={placeId}&browserTrackerId={account.BrowserTrackerId}";
+                    ? $"https://assetgame.roblox.com/game/PlaceLauncher.ashx?request=RequestGameJob&placeId={placeId}&gameId={jobId}&isPlayTogetherGame=false&browserTrackerId={account.BrowserTrackerId}"
+                    : $"https://assetgame.roblox.com/game/PlaceLauncher.ashx?request=RequestGame&placeId={placeId}&isPlayTogetherGame=false&browserTrackerId={account.BrowserTrackerId}";
+
+                // Handle Private Servers if jobId looks like a link or access code
+                if (!string.IsNullOrEmpty(jobId) && (jobId.Contains("privateServerLinkCode") || jobId.Length > 30))
+                {
+                    var accessCode = jobId;
+                    if (jobId.Contains("privateServerLinkCode="))
+                    {
+                        var match = System.Text.RegularExpressions.Regex.Match(jobId, "privateServerLinkCode=([^&]+)");
+                        if (match.Success) accessCode = match.Groups[1].Value;
+                    }
+                    launcherUrl = $"https://assetgame.roblox.com/game/PlaceLauncher.ashx?request=RequestPrivateGame&placeId={placeId}&accessCode={accessCode}&browserTrackerId={account.BrowserTrackerId}";
+                }
 
                 if (!string.IsNullOrEmpty(launchData))
                 {
@@ -341,13 +358,45 @@ namespace BloxManager.Services
                     launcherUrl += $"&launchData={Uri.EscapeDataString(rawLaunchData)}";
                 }
 
-                var launchUrl = $"roblox-player:1+launchmode:play+gameinfo:{authTicket}+launchtime:{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}+placelauncherurl:{Uri.EscapeDataString(launcherUrl)}+browsertrackerid:{account.BrowserTrackerId}+robloxLocale:en_us+gameLocale:en_us+channel:+LaunchExp:InApp";
+                var robloxPath = FindRobloxPath();
+                var launchTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                if (robloxPath != null)
                 {
-                    FileName = launchUrl,
-                    UseShellExecute = true
-                });
+                    // Direct EXE Launching - Using RAM style arguments
+                    _logger.LogInformation("Launching Roblox directly via EXE: {RobloxPath}", robloxPath);
+
+                    // Arguments used by RAM for direct launch
+                    var args = $"--app -t {authTicket} -j \"{launcherUrl}\" -b {account.BrowserTrackerId} --launchtime {launchTime} --robloxLocale en_us --gameLocale en_us --launchExp InApp";
+                    
+                    var startInfo = new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = robloxPath,
+                        Arguments = args,
+                        UseShellExecute = false,
+                        WorkingDirectory = Path.GetDirectoryName(robloxPath)
+                    };
+
+                    System.Diagnostics.Process.Start(startInfo);
+                }
+                else
+                {
+                    // Fallback to Deep Link if EXE not found
+                    var deepLink = $"roblox-player:1+launchmode:play+gameinfo:{authTicket}+launchtime:{launchTime}+placelauncherurl:{Uri.EscapeDataString(launcherUrl)}+browsertrackerid:{account.BrowserTrackerId}+robloxLocale:en_us+gameLocale:en_us+launchExp:InApp";
+
+                    _logger.LogInformation("Roblox EXE not found, falling back to deep link: {DeepLink}", deepLink);
+
+                    var startInfo = new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = "cmd",
+                        Arguments = $"/c start \"\" \"{deepLink}\"",
+                        CreateNoWindow = true,
+                        UseShellExecute = false,
+                        WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden
+                    };
+
+                    System.Diagnostics.Process.Start(startInfo);
+                }
 
                 account.LastUsed = DateTime.Now;
                 return true;
@@ -519,18 +568,135 @@ namespace BloxManager.Services
             try
             {
                 var presenceClient = new RestClient("https://presence.roblox.com");
-                var request = new RestRequest($"/v1/users/{userId}/presence", Method.Get);
+
+                // Presence API requires POST with body { userIds: [...] } and often
+                // returns richer data when a valid cookie is supplied.
+                var request = new RestRequest("/v1/presence/users", Method.Post);
+                request.AddHeader("Content-Type", "application/json");
+                request.AddStringBody(JsonConvert.SerializeObject(new { userIds = new long[] { userId } }), DataFormat.Json);
+
+                try
+                {
+                    var accountService = App.GetService<IAccountService>();
+                    var accounts = await accountService.GetAccountsAsync();
+                    var validCookie = accounts.FirstOrDefault(a => !string.IsNullOrWhiteSpace(a.SecurityToken))?.SecurityToken;
+                    if (!string.IsNullOrEmpty(validCookie))
+                    {
+                        request.AddHeader("Cookie", $".ROBLOSECURITY={validCookie}");
+                    }
+                }
+                catch (Exception ex2)
+                {
+                    _logger.LogDebug(ex2, "GetUserPresenceAsync: failed to attach cookie header");
+                }
 
                 var response = await presenceClient.ExecuteAsync(request);
-
                 if (response.IsSuccessful && !string.IsNullOrEmpty(response.Content))
                 {
-                    return JsonConvert.DeserializeObject<UserPresence>(response.Content);
+                    var token = JToken.Parse(response.Content);
+                    var arr = token["userPresences"] as JArray;
+                    var first = arr?.FirstOrDefault();
+                    if (first != null)
+                    {
+                        return first.ToObject<UserPresence>();
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning("GetUserPresenceAsync: unsuccessful response. Status: {StatusCode}, Content: {Content}", response.StatusCode, response.Content ?? string.Empty);
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to get user presence for user {UserId}", userId);
+            }
+
+            return null;
+        }
+
+        public async Task<Dictionary<long, UserPresence>> GetUsersPresenceAsync(IEnumerable<long> userIds)
+        {
+            var result = new Dictionary<long, UserPresence>();
+            try
+            {
+                var presenceClient = new RestClient("https://presence.roblox.com");
+                var request = new RestRequest("/v1/presence/users", Method.Post);
+                request.AddHeader("Content-Type", "application/json");
+                request.AddStringBody(JsonConvert.SerializeObject(new { userIds = userIds.ToArray() }), DataFormat.Json);
+
+                try
+                {
+                    var accountService = App.GetService<IAccountService>();
+                    var accounts = await accountService.GetAccountsAsync();
+                    var validCookie = accounts.FirstOrDefault(a => !string.IsNullOrWhiteSpace(a.SecurityToken))?.SecurityToken;
+                    if (!string.IsNullOrEmpty(validCookie))
+                    {
+                        request.AddHeader("Cookie", $".ROBLOSECURITY={validCookie}");
+                    }
+                }
+                catch (Exception ex2)
+                {
+                    _logger.LogDebug(ex2, "GetUsersPresenceAsync: failed to attach cookie header");
+                }
+
+                var response = await presenceClient.ExecuteAsync(request);
+                if (response.IsSuccessful && !string.IsNullOrEmpty(response.Content))
+                {
+                    var token = JToken.Parse(response.Content);
+                    var arr = token["userPresences"] as JArray ?? new JArray();
+                    foreach (var item in arr)
+                    {
+                        var presence = item.ToObject<UserPresence>();
+                        var idToken = item["userId"];
+                        if (presence != null && idToken != null && long.TryParse(idToken.ToString(), out var uid))
+                        {
+                            result[uid] = presence;
+                        }
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning("GetUsersPresenceAsync: unsuccessful response. Status: {StatusCode}, Content: {Content}", response.StatusCode, response.Content ?? string.Empty);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to get presences");
+            }
+            return result;
+        }
+
+        private string? FindRobloxPath()
+        {
+            try
+            {
+                var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                var robloxVersionsPath = Path.Combine(localAppData, "Roblox", "Versions");
+
+                if (!Directory.Exists(robloxVersionsPath)) return null;
+
+                // Roblox installs versions in folders like version-xxxxxxxxxxxxxx
+                // We need to find the one that contains RobloxPlayerBeta.exe
+                var versionFolders = Directory.GetDirectories(robloxVersionsPath, "version-*");
+                
+                // Sort by last write time to get the most recent version
+                var latestVersion = versionFolders
+                    .Select(d => new DirectoryInfo(d))
+                    .OrderByDescending(d => d.LastWriteTime)
+                    .FirstOrDefault();
+
+                if (latestVersion != null)
+                {
+                    var exePath = Path.Combine(latestVersion.FullName, "RobloxPlayerBeta.exe");
+                    if (File.Exists(exePath))
+                    {
+                        return exePath;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to locate Roblox installation path");
             }
 
             return null;
@@ -550,13 +716,13 @@ namespace BloxManager.Services
         {
             try
             {
-                var request = new RestRequest("/v1/authentication-ticket", Method.Post);
+                var request = new RestRequest("/v1/authentication-ticket/", Method.Post);
                 request.AddHeader("Cookie", $".ROBLOSECURITY={cookie}");
                 request.AddHeader("X-CSRF-TOKEN", await GetCsrfTokenAsync(cookie));
                 // Brookhaven Referer is standard in RAM to ensure game join success
                 request.AddHeader("Referer", "https://www.roblox.com/games/4924922222/Brookhaven-RP");
                 request.AddHeader("Content-Type", "application/json");
-                request.AddJsonBody(new { }); // Essential for some post endpoints
+                request.AddStringBody("{}", DataFormat.Json);
 
                 var response = await _authClient.ExecuteAsync(request);
 
@@ -564,7 +730,8 @@ namespace BloxManager.Services
                 {
                     // The ticket is returned in the RBX-Authentication-Ticket response header
                     var ticketHeader = response.Headers?.FirstOrDefault(h =>
-                        string.Equals(h.Name, "RBX-Authentication-Ticket", StringComparison.OrdinalIgnoreCase));
+                        string.Equals(h.Name, "RBX-Authentication-Ticket", StringComparison.OrdinalIgnoreCase) || 
+                        string.Equals(h.Name, "rbx-authentication-ticket", StringComparison.OrdinalIgnoreCase));
 
                     if (ticketHeader?.Value != null)
                     {
@@ -590,6 +757,20 @@ namespace BloxManager.Services
         {
             var userInfo = await GetUserInfoAsync(cookie);
             return userInfo != null;
+        }
+
+        public async Task<bool> TestCsrfTokenAsync(string cookie)
+        {
+            try
+            {
+                var csrfToken = await GetCsrfTokenAsync(cookie);
+                return !string.IsNullOrEmpty(csrfToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "CSRF token test failed");
+                return false;
+            }
         }
 
         public async Task RefreshCookieAsync(Account account)

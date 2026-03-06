@@ -208,12 +208,53 @@
                 </ScrollViewer>
 
                 <!-- Footer / Status -->
-                <Border Grid.Row="2" Margin="12,0,12,8" Padding="8" Background="{StaticResource GlassBackgroundBrush}" CornerRadius="8">
+                <Border Grid.Row="2" Margin="12,0,12,8" Padding="10" Background="{StaticResource GlassBackgroundBrush}" CornerRadius="10">
                     <StackPanel>
-                        <TextBlock Text="ACCOUNTS ACTIVE" Style="{StaticResource SidebarLabel}" Margin="0,0,0,2"/>
-                        <TextBlock Text="{Binding AccountsInGame}" FontSize="16" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}"/>
-                        <TextBlock Text="SESSION UPTIME" Style="{StaticResource SidebarLabel}" Margin="0,8,0,2"/>
-                        <TextBlock Text="{Binding InGameUptimeText}" FontSize="12" FontFamily="Consolas" FontWeight="SemiBold" Foreground="{StaticResource TextPrimaryBrush}"/>
+                        <TextBlock Text="ACCOUNTS ACTIVE" Style="{StaticResource SidebarLabel}" Margin="0,0,0,4"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Orientation="Horizontal" Grid.Column="0" VerticalAlignment="Center">
+                                <Ellipse Width="10" Height="10" Margin="0,0,8,0">
+                                    <Ellipse.Style>
+                                        <Style TargetType="Ellipse">
+                                            <Setter Property="Fill" Value="{StaticResource TextMutedBrush}"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding AccountsInGame, Converter={StaticResource IntToBoolConverter}}" Value="True">
+                                                    <Setter Property="Fill" Value="{StaticResource SuccessStatusBrush}"/>
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding AccountsInGame, Converter={StaticResource IntToBoolConverter}}" Value="False">
+                                                    <Setter Property="Fill" Value="{StaticResource ErrorStatusBrush}"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Ellipse.Style>
+                                </Ellipse>
+                                <TextBlock Text="{Binding AccountsInGame}" FontSize="18" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <TextBlock Text="SESSION UPTIME" Style="{StaticResource SidebarLabel}" Margin="0,10,0,2"/>
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Ellipse Width="10" Height="10" Margin="0,0,8,0">
+                                <Ellipse.Style>
+                                    <Style TargetType="Ellipse">
+                                        <Setter Property="Fill" Value="{StaticResource TextMutedBrush}"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding AccountsInGame, Converter={StaticResource IntToBoolConverter}}" Value="True">
+                                                <Setter Property="Fill" Value="{StaticResource SuccessStatusBrush}"/>
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding AccountsInGame, Converter={StaticResource IntToBoolConverter}}" Value="False">
+                                                <Setter Property="Fill" Value="{StaticResource ErrorStatusBrush}"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Ellipse.Style>
+                            </Ellipse>
+                            <TextBlock Text="{Binding InGameUptimeText}" FontSize="13" FontFamily="Consolas" FontWeight="SemiBold" Foreground="{StaticResource TextPrimaryBrush}"/>
+                        </StackPanel>
                     </StackPanel>
                 </Border>
             </Grid>
@@ -460,50 +501,108 @@
                                     <Border Background="Transparent" Padding="0,4"
                                             PreviewMouseMove="ListBoxItem_PreviewMouseMove"
                                             Drop="ListBoxItem_Drop" AllowDrop="True">
-                                        <Border Background="{StaticResource GlassBackgroundBrush}" Padding="12,8" CornerRadius="4">
-                                            <Grid>
+                                        <Border Padding="12,8" CornerRadius="4">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Background" Value="{StaticResource GlassBackgroundBrush}"/>
+                                                    <Style.Triggers>
+                                                        <!-- If CustomGroupBrush is not null, it will be used by the local Background setter if we use DynamicResource -->
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <Border.Background>
+                                                <DynamicResource ResourceKey="CustomGroupBrush"/>
+                                            </Border.Background>
+                                            <Border.Opacity>
+                                                <DynamicResource ResourceKey="CustomGroupOpacity"/>
+                                            </Border.Opacity>
+                                            <Grid VerticalAlignment="Center">
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="Auto"/>
                                                     <ColumnDefinition Width="*"/>
                                                 </Grid.ColumnDefinitions>
                                                 
-                                                <!-- Arrow Toggle Button - Separate from group area -->
+                                                <!-- Arrow Toggle Button -->
                                                 <Button Grid.Column="0" 
                                                         Click="ArrowButton_Click"
                                                         Tag="{Binding}"
                                                         Background="Transparent" 
                                                         BorderThickness="0"
                                                         Padding="0"
-                                                        Margin="0,0,8,0"
-                                                        Width="16" Height="16"
+                                                        Margin="0,0,12,0"
+                                                        Width="20" Height="20"
                                                         Cursor="Hand"
                                                         VerticalAlignment="Center">
-                                                    <Path Data="M7,10L12,15L17,10" 
-                                                          Stroke="{StaticResource PrimaryAccentBrush}" 
-                                                          StrokeThickness="2" 
-                                                          Fill="Transparent"
-                                                          HorizontalAlignment="Center" 
-                                                          VerticalAlignment="Center">
-                                                        <Path.RenderTransform>
-                                                            <RotateTransform CenterX="12" CenterY="12">
-                                                                <RotateTransform.Angle>
-                                                                    <Binding Path="IsExpanded" Converter="{StaticResource InverseBoolConverter}"/>
-                                                                </RotateTransform.Angle>
-                                                            </RotateTransform>
-                                                        </Path.RenderTransform>
-                                                    </Path>
+                                                    <Viewbox Width="12" Height="12" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                        <Path x:Name="ArrowPath" Data="M2,4 L8,10 L14,4" 
+                                                              Stroke="{StaticResource PrimaryAccentBrush}" 
+                                                              StrokeThickness="2.5" 
+                                                              StrokeStartLineCap="Round"
+                                                              StrokeEndLineCap="Round"
+                                                              Fill="Transparent"
+                                                              RenderTransformOrigin="0.5,0.5">
+                                                            <Path.Style>
+                                                                <Style TargetType="Path">
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsExpanded}" Value="True">
+                                                                            <DataTrigger.EnterActions>
+                                                                                <BeginStoryboard>
+                                                                                    <Storyboard>
+                                                                                        <DoubleAnimation Storyboard.TargetProperty="(Path.RenderTransform).(RotateTransform.Angle)"
+                                                                                                         To="0" Duration="0:0:0.2">
+                                                                                            <DoubleAnimation.EasingFunction>
+                                                                                                <QuadraticEase EasingMode="EaseInOut"/>
+                                                                                            </DoubleAnimation.EasingFunction>
+                                                                                        </DoubleAnimation>
+                                                                                    </Storyboard>
+                                                                                </BeginStoryboard>
+                                                                            </DataTrigger.EnterActions>
+                                                                            <DataTrigger.ExitActions>
+                                                                                <BeginStoryboard>
+                                                                                    <Storyboard>
+                                                                                        <DoubleAnimation Storyboard.TargetProperty="(Path.RenderTransform).(RotateTransform.Angle)"
+                                                                                                         To="180" Duration="0:0:0.2">
+                                                                                            <DoubleAnimation.EasingFunction>
+                                                                                                <QuadraticEase EasingMode="EaseInOut"/>
+                                                                                            </DoubleAnimation.EasingFunction>
+                                                                                        </DoubleAnimation>
+                                                                                    </Storyboard>
+                                                                                </BeginStoryboard>
+                                                                            </DataTrigger.ExitActions>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Path.Style>
+                                                            <Path.RenderTransform>
+                                                                <RotateTransform Angle="{Binding IsExpanded, Converter={StaticResource BoolToAngleConverter}}"/>
+                                                            </Path.RenderTransform>
+                                                        </Path>
+                                                    </Viewbox>
                                                 </Button>
                                                 
                                                 <!-- Group Name and Count Area -->
-                                                <Border Grid.Column="1" 
-                                                        Background="Transparent"
-                                                        MouseLeftButtonDown="GroupArea_MouseLeftButtonDown"
-                                                        Tag="{Binding}">
-                                                    <StackPanel Orientation="Horizontal">
-                                                        <TextBlock Text="{Binding Name}" Foreground="{StaticResource PrimaryAccentBrush}" FontWeight="Bold" FontSize="13"/>
-                                                        <TextBlock Text="{Binding Accounts.Count, StringFormat=' ({0})', FallbackValue=''}" Foreground="{StaticResource TextMutedBrush}" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0"/>
-                                                    </StackPanel>
-                                                </Border>
+                                                <StackPanel Grid.Column="1" 
+                                                            Orientation="Horizontal"
+                                                            VerticalAlignment="Center"
+                                                            Background="Transparent"
+                                                            MouseLeftButtonDown="GroupArea_MouseLeftButtonDown"
+                                                            Tag="{Binding}">
+                                                    <TextBlock Text="{Binding Name}" FontWeight="Bold" FontSize="13" VerticalAlignment="Center">
+                                                        <TextBlock.Foreground>
+                                                            <DynamicResource ResourceKey="CustomTextBrush"/>
+                                                        </TextBlock.Foreground>
+                                                    </TextBlock>
+                                                    <TextBlock Text="{Binding Accounts.Count, StringFormat=' ({0})', FallbackValue=''}" FontSize="11" VerticalAlignment="Center" Margin="6,0,0,0">
+                                                        <TextBlock.Foreground>
+                                                            <DynamicResource ResourceKey="CustomTextBrush"/>
+                                                        </TextBlock.Foreground>
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Opacity" Value="0.6"/>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </StackPanel>
                                             </Grid>
                                         </Border>
                                         
@@ -519,7 +618,24 @@
 
                                 <!-- Account Template -->
                                 <DataTemplate DataType="{x:Type Models:Account}">
-                                    <Border x:Name="Row" Style="{StaticResource AcctRow}" Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType=ListBox}}">
+                                    <Border x:Name="Row" Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType=ListBox}}">
+                                        <Border.Resources>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+                                            </Style>
+                                        </Border.Resources>
+                                        <Border.Style>
+                                            <Style TargetType="Border" BasedOn="{StaticResource AcctRow}">
+                                                <Setter Property="Background" Value="{DynamicResource CustomAltAccountBrush}"/>
+                                                <Setter Property="Opacity" Value="{DynamicResource CustomAltAccountOpacity}"/>
+                                                <Style.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter Property="Background" Value="{StaticResource GlassBackgroundBrush}"/>
+                                                        <Setter Property="Opacity" Value="1.0"/>
+                                                    </Trigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
                                         <Border.ContextMenu>
                                             <ContextMenu>
                                                 <MenuItem Header="Add Account" Command="{Binding PlacementTarget.Tag.AddAccountCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
@@ -621,11 +737,19 @@
 
                                             <!-- User Info -->
                                             <StackPanel Grid.Column="2" VerticalAlignment="Center" Orientation="Horizontal">
-                                                <TextBlock Text="{Binding Username}" Foreground="{StaticResource TextPrimaryBrush}" 
-                                                            FontSize="14" FontWeight="SemiBold"/>
+                                                <TextBlock Text="{Binding Username}" 
+                                                            FontSize="14" FontWeight="SemiBold">
+                                                    <TextBlock.Foreground>
+                                                        <DynamicResource ResourceKey="CustomTextBrush"/>
+                                                    </TextBlock.Foreground>
+                                                </TextBlock>
                                                 <Border Background="{StaticResource GlassBackgroundBrush}" CornerRadius="4" Margin="10,0,0,0" Padding="6,2" VerticalAlignment="Center">
-                                                    <TextBlock Text="{Binding Description}" Foreground="{StaticResource PrimaryAccentBrush}" 
-                                                               FontSize="11" MaxWidth="300" TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock Text="{Binding Description}" 
+                                                               FontSize="11" MaxWidth="300" TextTrimming="CharacterEllipsis">
+                                                        <TextBlock.Foreground>
+                                                            <DynamicResource ResourceKey="CustomTextBrush"/>
+                                                        </TextBlock.Foreground>
+                                                    </TextBlock>
                                                     <Border.Style>
                                                         <Style TargetType="Border">
                                                             <Setter Property="Visibility" Value="Visible"/>
@@ -644,7 +768,11 @@
 
                                             <!-- Group Tag -->
                                             <Border Grid.Column="3" Background="{StaticResource GlassBackgroundBrush}" Padding="6,2" CornerRadius="4" VerticalAlignment="Center" Opacity="0.6">
-                                                <TextBlock Text="{Binding Group}" Foreground="{StaticResource TextSecondaryBrush}" FontSize="10"/>
+                                                <TextBlock Text="{Binding Group}" FontSize="10">
+                                                    <TextBlock.Foreground>
+                                                        <DynamicResource ResourceKey="CustomTextBrush"/>
+                                                    </TextBlock.Foreground>
+                                                </TextBlock>
                                             </Border>
                                         </Grid>
                                     </Border>

@@ -33,8 +33,6 @@ namespace BloxManager.Views
             StateChanged += MainWindow_StateChanged;
             Loaded += MainWindow_Loaded;
             DataContextChanged += MainWindow_DataContextChanged;
-            
-            _ = viewModel.SettingsViewModel.CheckForUpdateOnStartupAsync();
         }
 
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -87,22 +85,38 @@ namespace BloxManager.Views
 
         private void RefreshBackgroundImage()
         {
+            System.Diagnostics.Debug.WriteLine("RefreshBackgroundImage called");
             try
             {
-                if (_backgroundVm == null || BackgroundImage == null) return;
+                if (_backgroundVm == null) 
+                {
+                    System.Diagnostics.Debug.WriteLine("RefreshBackgroundImage: _backgroundVm is null");
+                    return;
+                }
+                if (BackgroundImage == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("RefreshBackgroundImage: BackgroundImage control is null");
+                    return;
+                }
+
                 var rawPath = _backgroundVm.BackgroundImagePath ?? string.Empty;
+                System.Diagnostics.Debug.WriteLine($"RefreshBackgroundImage: rawPath = '{rawPath}'");
                 var path = rawPath.Trim().Trim('"');
                 path = Environment.ExpandEnvironmentVariables(path);
                 if (!string.IsNullOrWhiteSpace(path) && !System.IO.Path.IsPathRooted(path))
                     path = System.IO.Path.GetFullPath(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, path));
 
+                System.Diagnostics.Debug.WriteLine($"RefreshBackgroundImage: resolved path = '{path}'");
+
                 if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
                 {
+                    System.Diagnostics.Debug.WriteLine("RefreshBackgroundImage: path is empty or file not found");
                     BackgroundImage.Source = null;
                     BackgroundImage.Visibility = Visibility.Collapsed;
                     return;
                 }
 
+                System.Diagnostics.Debug.WriteLine("RefreshBackgroundImage: loading bitmap...");
                 var bitmap = new BitmapImage();
                 bitmap.BeginInit();
                 bitmap.UriSource = new Uri(path, UriKind.Absolute);
@@ -114,11 +128,16 @@ namespace BloxManager.Views
                 BackgroundImage.Source = bitmap;
                 BackgroundImage.Visibility = Visibility.Visible;
                 BackgroundImage.Opacity = Math.Max(0.0, Math.Min(1.0, _backgroundVm.BackgroundImageOpacity));
+                System.Diagnostics.Debug.WriteLine("RefreshBackgroundImage completed successfully");
             }
-            catch
+            catch (Exception ex)
             {
-                BackgroundImage.Source = null;
-                BackgroundImage.Visibility = Visibility.Collapsed;
+                System.Diagnostics.Debug.WriteLine($"RefreshBackgroundImage failed: {ex}");
+                if (BackgroundImage != null)
+                {
+                    BackgroundImage.Source = null;
+                    BackgroundImage.Visibility = Visibility.Collapsed;
+                }
             }
         }
 

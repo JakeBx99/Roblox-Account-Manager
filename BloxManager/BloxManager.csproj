@@ -6,14 +6,14 @@
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <Nullable>enable</Nullable>
     <UseWPF>true</UseWPF>
-    <ApplicationIcon>Assets\BloxManager_Logo.ico</ApplicationIcon>
+    <!-- <ApplicationIcon>Assets\BloxManager_Logo.ico</ApplicationIcon> -->
     <AssemblyTitle>BloxManager</AssemblyTitle>
     <AssemblyDescription>Modern Roblox Account Manager</AssemblyDescription>
     <AssemblyCompany>BloxManager</AssemblyCompany>
     <AssemblyProduct>BloxManager</AssemblyProduct>
     <Copyright>Copyright © BloxManager 2025</Copyright>
-    <AssemblyVersion>1.0.0.0</AssemblyVersion>
-    <FileVersion>1.0.0.0</FileVersion>
+    <AssemblyVersion>1.0.1.0</AssemblyVersion>
+    <FileVersion>1.0.1.0</FileVersion>
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
@@ -28,9 +28,9 @@
     <DebugType>pdbonly</DebugType>
     <Optimize>true</Optimize>
     <SelfContained>true</SelfContained>
-    <PublishSingleFile>true</PublishSingleFile>
+    <PublishSingleFile>false</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <PublishReadyToRun>true</PublishReadyToRun>
+    <PublishReadyToRun>false</PublishReadyToRun>
     <PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>
 
@@ -56,7 +56,7 @@
     <PackageReference Include="PuppeteerSharp" Version="10.0.0" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.2" />
     <PackageReference Include="MaterialDesignThemes" Version="4.9.0" />
-    <PackageReference Include="System.Security.Cryptography.Algorithms" Version="4.3.1" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
     <PackageReference Include="System.Management" Version="8.0.0" />
     <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
   </ItemGroup>

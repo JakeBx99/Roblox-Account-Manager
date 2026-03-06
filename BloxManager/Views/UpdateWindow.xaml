@@ -1,0 +1,75 @@
+<Window x:Class="BloxManager.Views.UpdateWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:BloxManager.Views"
+        mc:Ignorable="d"
+        Title="Update Available" Height="220" Width="450"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        FontFamily="Segoe UI Variable, Segoe UI, Arial">
+
+    <Border Background="{StaticResource FrostedBackgroundBrush}" 
+            BorderBrush="{StaticResource GlassBorderBrush}" 
+            BorderThickness="1" 
+            CornerRadius="12">
+        <Grid Margin="24">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Header -->
+            <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,16">
+                <Path Data="M11,15H13V17H11V15M11,7H13V13H11V7M12,2C6.47,2 2,6.5 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20Z" 
+                      Fill="{StaticResource PrimaryAccentBrush}" 
+                      Width="24" Height="24" Stretch="Uniform" Margin="0,0,12,0"/>
+                <TextBlock Text="Update Available" FontSize="18" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}"/>
+            </StackPanel>
+
+            <!-- Content -->
+            <StackPanel Grid.Row="1">
+                <Grid x:Name="CheckingArea" Visibility="Visible">
+                    <TextBlock Text="Checking for updates..." Foreground="{StaticResource TextSecondaryBrush}" FontSize="13" VerticalAlignment="Center"/>
+                </Grid>
+
+                <TextBlock x:Name="StatusText" Text="A new version of BloxManager is available. Would you like to update now?" 
+                           TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" FontSize="13" Margin="0,0,0,16" Visibility="Collapsed"/>
+                
+                <Grid x:Name="ProgressArea" Visibility="Collapsed">
+                    <StackPanel>
+                        <ProgressBar x:Name="DownloadProgress" Value="0" Height="6"
+                                     Foreground="{StaticResource PrimaryAccentGradient}" 
+                                     Background="#20FFFFFF" BorderThickness="0"/>
+                        <TextBlock x:Name="ProgressText" Text="0%" HorizontalAlignment="Right" 
+                                   Margin="0,4,0,0" FontSize="11" Foreground="{StaticResource TextMutedBrush}"/>
+                    </StackPanel>
+                </Grid>
+            </StackPanel>
+
+            <!-- Actions -->
+            <Grid Grid.Row="2">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel x:Name="ButtonArea" Grid.Column="1" Grid.ColumnSpan="2" Orientation="Horizontal">
+                    <Button Content="Update Later" Click="OnUpdateLater" 
+                            Style="{StaticResource SecondaryActionButton}" Width="100" Margin="0,0,12,0"/>
+                    <Button Content="Update Now" Click="OnUpdateNow" 
+                            Style="{StaticResource PrimaryActionButton}" Width="100"/>
+                </StackPanel>
+
+                <Button x:Name="CancelButton" Content="Cancel" Click="OnCancel" Grid.Column="2"
+                        Style="{StaticResource SecondaryActionButton}" Width="100" Visibility="Collapsed"/>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

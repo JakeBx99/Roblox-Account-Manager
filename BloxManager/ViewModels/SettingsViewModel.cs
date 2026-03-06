@@ -159,12 +159,6 @@ namespace BloxManager.ViewModels
         private string _statusMessage = string.Empty;
 
         [ObservableProperty]
-        private double _downloadProgress;
-
-        [ObservableProperty]
-        private bool _showUpdateProgress;
-
-        [ObservableProperty]
         private string _backgroundImagePath = string.Empty;
 
 
@@ -175,6 +169,7 @@ namespace BloxManager.ViewModels
         {
             _ = _settingsService.SetSettingAsync("BackgroundImagePath", value);
             UpdateImageDimensions(value);
+            AutoAdjustThemeFromBackground();
         }
 
         private void UpdateImageDimensions(string imagePath)
@@ -194,6 +189,59 @@ namespace BloxManager.ViewModels
             {
                 _logger.LogError(ex, "Failed to get image dimensions for {ImagePath}", imagePath);
                 BackgroundImageDimensions = "Invalid image";
+            }
+        }
+
+        private void AutoAdjustThemeFromBackground()
+        {
+            try
+            {
+                var app = System.Windows.Application.Current;
+                if (app == null) return;
+                var resources = app.Resources;
+                if (resources == null) return;
+
+                string path = BackgroundImagePath ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                {
+                    // No background: keep default (light-on-dark)
+                    resources["CustomTextBrush"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.White);
+                    return;
+                }
+
+                double luminanceSum = 0;
+                int count = 0;
+                using (var bmp = new System.Drawing.Bitmap(path))
+                {
+                    int stepX = Math.Max(1, bmp.Width / 64);
+                    int stepY = Math.Max(1, bmp.Height / 64);
+                    for (int y = 0; y < bmp.Height; y += stepY)
+                    {
+                        for (int x = 0; x < bmp.Width; x += stepX)
+                        {
+                            var p = bmp.GetPixel(x, y);
+                            // ITU-R BT.709 luminance
+                            double l = (0.2126 * p.R + 0.7152 * p.G + 0.0722 * p.B) / 255.0;
+                            luminanceSum += l;
+                            count++;
+                        }
+                    }
+                }
+
+                double avg = count > 0 ? luminanceSum / count : 0.5;
+                bool isLight = avg >= 0.6;
+                var textColor = isLight ? System.Windows.Media.Colors.Black : System.Windows.Media.Colors.White;
+                resources["CustomTextBrush"] = new System.Windows.Media.SolidColorBrush(textColor);
+
+                var bgColor = isLight
+                    ? System.Windows.Media.Color.FromArgb(0x19, 0x00, 0x00, 0x00)
+                    : System.Windows.Media.Color.FromArgb(0x1A, 0xFF, 0xFF, 0xFF);
+                resources["CustomAltAccountBrush"] = new System.Windows.Media.SolidColorBrush(bgColor);
+                resources["CustomGroupBrush"] = new System.Windows.Media.SolidColorBrush(bgColor);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "AutoAdjustThemeFromBackground failed");
             }
         }
 
@@ -230,6 +278,114 @@ namespace BloxManager.ViewModels
         partial void OnJoinDelaySecondsChanged(int value)
         {
             _ = _settingsService.SetSettingAsync("JoinDelaySeconds", value);
+        }
+
+        [ObservableProperty]
+        private string _altAccountBackgroundColor = "#000000";
+
+        partial void OnAltAccountBackgroundColorChanged(string value)
+        {
+            _ = _settingsService.SetSettingAsync("AltAccountBackgroundColor", value);
+            if (!IsLoading) UpdateMainAppResources();
+        }
+
+        [ObservableProperty]
+        private double _altAccountOpacity = 100.0;
+
+        partial void OnAltAccountOpacityChanged(double value)
+        {
+            _ = _settingsService.SetSettingAsync("AltAccountOpacity", value);
+            if (!IsLoading) UpdateMainAppResources();
+        }
+
+        [ObservableProperty]
+        private string _groupBackgroundColor = "#000000";
+
+        partial void OnGroupBackgroundColorChanged(string value)
+        {
+            _ = _settingsService.SetSettingAsync("GroupBackgroundColor", value);
+            if (!IsLoading) UpdateMainAppResources();
+        }
+
+        [ObservableProperty]
+        private double _groupOpacity = 100.0;
+
+        partial void OnGroupOpacityChanged(double value)
+        {
+            _ = _settingsService.SetSettingAsync("GroupOpacity", value);
+            if (!IsLoading) UpdateMainAppResources();
+        }
+
+        [ObservableProperty]
+        private string _customTextColor = "#FFFFFF";
+
+        partial void OnCustomTextColorChanged(string value)
+        {
+            _ = _settingsService.SetSettingAsync("CustomTextColor", value);
+            if (!IsLoading) UpdateMainAppResources();
+        }
+
+        private void UpdateMainAppResources()
+        {
+            var app = System.Windows.Application.Current;
+            if (app == null) return;
+
+            app.Dispatcher.Invoke(() =>
+            {
+                try
+                {
+                    var resources = app.Resources;
+                    if (resources == null) return;
+
+                    if (!string.IsNullOrEmpty(AltAccountBackgroundColor))
+                    {
+                        try 
+                        {
+                            var color = (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(AltAccountBackgroundColor);
+                            resources["CustomAltAccountBrush"] = new System.Windows.Media.SolidColorBrush(color);
+                        }
+                        catch { resources["CustomAltAccountBrush"] = null; }
+                    }
+                    else
+                    {
+                        resources["CustomAltAccountBrush"] = null;
+                    }
+                    resources["CustomAltAccountOpacity"] = AltAccountOpacity / 100.0;
+
+                    if (!string.IsNullOrEmpty(GroupBackgroundColor))
+                    {
+                        try 
+                        {
+                            var color = (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(GroupBackgroundColor);
+                            resources["CustomGroupBrush"] = new System.Windows.Media.SolidColorBrush(color);
+                        }
+                        catch { resources["CustomGroupBrush"] = null; }
+                    }
+                    else
+                    {
+                        resources["CustomGroupBrush"] = null;
+                    }
+                    resources["CustomGroupOpacity"] = GroupOpacity / 100.0;
+
+                    if (!string.IsNullOrEmpty(CustomTextColor))
+                    {
+                        try 
+                        {
+                            var color = (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(CustomTextColor);
+                            resources["CustomTextBrush"] = new System.Windows.Media.SolidColorBrush(color);
+                        }
+                        catch { resources["CustomTextBrush"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.White); }
+                    }
+                    else
+                    {
+                        resources["CustomTextBrush"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.White);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to update main app resources");
+                }
+            });
         }
 
         public string[] AvailableThemes { get; } = { "Light", "Dark", "System" };
@@ -358,8 +514,18 @@ namespace BloxManager.ViewModels
                 BackgroundImageStretch = await _settingsService.GetSettingAsync<string>("BackgroundImageStretch") ?? "UniformToFill";
                 BackgroundImageAlignment = await _settingsService.GetSettingAsync<string>("BackgroundImageAlignment") ?? "Center";
                 BackgroundImageOpacity = await _settingsService.GetSettingAsync<double>("BackgroundImageOpacity", 1.0);
-                JoinDelaySeconds = await _settingsService.GetSettingAsync<int>("JoinDelaySeconds", 2);
+                JoinDelaySeconds = await _settingsService.GetSettingAsync("JoinDelaySeconds", 2);
+                
+                AltAccountBackgroundColor = await _settingsService.GetSettingAsync("AltAccountBackgroundColor", string.Empty);
+                AltAccountOpacity = await _settingsService.GetSettingAsync("AltAccountOpacity", 100.0);
+                GroupBackgroundColor = await _settingsService.GetSettingAsync("GroupBackgroundColor", string.Empty);
+                GroupOpacity = await _settingsService.GetSettingAsync("GroupOpacity", 100.0);
+                CustomTextColor = await _settingsService.GetSettingAsync("CustomTextColor", "#FFFFFF");
+                
                 LowMemoryMode = await _settingsService.GetLowMemoryModeAsync();
+                
+                UpdateMainAppResources();
+                AutoAdjustThemeFromBackground();
             }
             catch (Exception ex)
             {
@@ -370,95 +536,6 @@ namespace BloxManager.ViewModels
             {
                 IsLoading = false;
                 StatusMessage = "Ready";
-            }
-        }
-
-        [RelayCommand]
-        public async Task CheckForUpdatesAsync()
-        {
-            await RunUpdateCheckAsync(false);
-        }
-
-        public async Task CheckForUpdateOnStartupAsync()
-        {
-            if (CheckForUpdates)
-            {
-                await RunUpdateCheckAsync(true);
-            }
-        }
-
-        private async Task RunUpdateCheckAsync(bool isStartup)
-        {
-            try
-            {
-                if (!isStartup)
-                {
-                    IsLoading = true;
-                    StatusMessage = "Checking for updates...";
-                }
-
-                var owner = await _settingsService.GetSettingAsync<string>("UpdateRepoOwner") ?? "JakeBx99";
-                var repo  = await _settingsService.GetSettingAsync<string>("UpdateRepoName")  ?? "Um";
-                var updater = App.GetService<IUpdateService>();
-                var (hasUpdate, current, latest, downloadUrl) = await updater.CheckForUpdateAsync(owner, repo);
-
-                if (!hasUpdate)
-                {
-                    if (!isStartup)
-                        StatusMessage = $"You are up to date (current {current}).";
-                    return;
-                }
-
-                bool shouldDownload = !isStartup;
-
-                if (isStartup)
-                {
-                    var result = System.Windows.MessageBox.Show(
-                        $"A new update is available: {latest}\nCurrent version: {current}\n\nWould you like to download it now?",
-                        "Update Available",
-                        System.Windows.MessageBoxButton.YesNo,
-                        System.Windows.MessageBoxImage.Information);
-                    
-                    if (result == System.Windows.MessageBoxResult.Yes)
-                    {
-                        shouldDownload = true;
-                    }
-                }
-
-                if (shouldDownload)
-                {
-                    ShowUpdateProgress = true;
-                    DownloadProgress = 0;
-                    StatusMessage = $"Update available: {latest} (current {current}). Downloading...";
-                    
-                    var progress = new Progress<double>(p => DownloadProgress = p);
-                    var path = await updater.DownloadLatestAsync(downloadUrl, progress);
-                    
-                    if (!string.IsNullOrEmpty(path))
-                    {
-                        StatusMessage = $"Downloaded update to: {path}";
-                        try { System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{path}\""); } catch { }
-                    }
-                    else
-                    {
-                        StatusMessage = "Failed to download update.";
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Update check failed");
-                if (!isStartup)
-                    StatusMessage = "Update check failed";
-            }
-            finally
-            {
-                IsLoading = false;
-                ShowUpdateProgress = false;
-                if (isStartup && StatusMessage == "Checking for updates...")
-                {
-                     StatusMessage = "Ready";
-                }
             }
         }
 
@@ -491,6 +568,11 @@ namespace BloxManager.ViewModels
                 await _settingsService.SetSettingAsync("BackgroundImageStretch", BackgroundImageStretch);
                 await _settingsService.SetSettingAsync("BackgroundImageAlignment", BackgroundImageAlignment);
                 await _settingsService.SetSettingAsync("BackgroundImageOpacity", BackgroundImageOpacity);
+                await _settingsService.SetSettingAsync("AltAccountBackgroundColor", AltAccountBackgroundColor);
+                await _settingsService.SetSettingAsync("AltAccountOpacity", AltAccountOpacity);
+                await _settingsService.SetSettingAsync("GroupBackgroundColor", GroupBackgroundColor);
+                await _settingsService.SetSettingAsync("GroupOpacity", GroupOpacity);
+                await _settingsService.SetSettingAsync("CustomTextColor", CustomTextColor);
                 await _settingsService.SetLowMemoryModeAsync(LowMemoryMode);
 
                 StatusMessage = "Settings saved";
@@ -537,7 +619,18 @@ namespace BloxManager.ViewModels
                 BackgroundImageAlignment = "Center";
                 BackgroundImageOpacity = 1.0;
 
+                AltAccountBackgroundColor = string.Empty;
+                AltAccountOpacity = 100.0;
+                GroupBackgroundColor = string.Empty;
+                GroupOpacity = 100.0;
+                CustomTextColor = "#FFFFFF";
+                
+                LowMemoryMode = true;
+                AlwaysOnTop = false;
+                JoinDelaySeconds = 2;
+
                 await SaveSettingsAsync();
+                UpdateMainAppResources();
                 StatusMessage = "Defaults restored";
             }
             catch (Exception ex)

@@ -21,6 +21,8 @@ namespace BloxManager.Models
         private string _description = string.Empty;
         private string _password = string.Empty;
         private bool _isSelected = false;
+        private string _avatarUrl = string.Empty;
+        private UserPresence? _presence;
 
 
         [JsonProperty("id")]
@@ -84,7 +86,15 @@ namespace BloxManager.Models
         public string Group
         {
             get => _group;
-            set { if (_group != value) { _group = value; OnPropertyChanged(); } }
+            set 
+            { 
+                var val = value ?? "Default";
+                if (_group != val) 
+                { 
+                    _group = val; 
+                    OnPropertyChanged(); 
+                } 
+            }
         }
 
         [JsonProperty("isValid")]
@@ -131,7 +141,18 @@ namespace BloxManager.Models
         public int SortOrder { get; set; }
 
         [JsonProperty("avatarUrl")]
-        public string AvatarUrl { get; set; } = string.Empty;
+        public string AvatarUrl
+        {
+            get => _avatarUrl;
+            set
+            {
+                if (_avatarUrl != value)
+                {
+                    _avatarUrl = value ?? string.Empty;
+                    OnPropertyChanged();
+                }
+            }
+        }
 
 
         // Runtime properties (not serialized)
@@ -148,7 +169,19 @@ namespace BloxManager.Models
         public string? CsrfToken { get; set; }
 
         [JsonIgnore]
-        public UserPresence? Presence { get; set; }
+        public UserPresence? Presence
+        {
+            get => _presence;
+            set
+            {
+                if (!ReferenceEquals(_presence, value))
+                {
+                    _presence = value;
+                    OnPropertyChanged();
+                    OnPropertyChanged(nameof(IsOnline));
+                }
+            }
+        }
 
         [JsonIgnore]
         public bool IsOnline => Presence?.Type == "online" || Presence?.Type == "in-game";
@@ -168,6 +201,21 @@ namespace BloxManager.Models
                 if (_isSelected != value)
                 {
                     _isSelected = value;
+                    OnPropertyChanged();
+                }
+            }
+        }
+
+        private bool _isRunning;
+        [JsonIgnore]
+        public bool IsRunning
+        {
+            get => _isRunning;
+            set
+            {
+                if (_isRunning != value)
+                {
+                    _isRunning = value;
                     OnPropertyChanged();
                 }
             }

@@ -13,6 +13,7 @@ namespace BloxManager.Services
     {
         Task<(bool hasUpdate, string current, string latest, string downloadUrl)> CheckForUpdateAsync(string owner, string repo);
         Task<string?> DownloadLatestAsync(string downloadUrl, IProgress<double>? progress = null, string fileNameHint = "BloxManager_Update.exe");
+        string? GetCachedUpdatePath(string downloadUrl);
     }
     
     public class UpdateService : IUpdateService
@@ -70,12 +71,37 @@ namespace BloxManager.Services
             }
         }
 
+        public string? GetCachedUpdatePath(string downloadUrl)
+        {
+            try
+            {
+                var fileName = Path.GetFileName(new Uri(downloadUrl).AbsolutePath);
+                if (string.IsNullOrWhiteSpace(fileName)) return null;
+                
+                var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                var targetPath = Path.Combine(localAppData, "BloxManager", "Updates", fileName);
+                return File.Exists(targetPath) ? targetPath : null;
+            }
+            catch { return null; }
+        }
+
         public async Task<string?> DownloadLatestAsync(string downloadUrl, IProgress<double>? progress = null, string fileNameHint = "BloxManager_Update.exe")
         {
             try
             {
                 if (string.IsNullOrEmpty(downloadUrl)) return null;
-                var targetDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+                
+                // Fast path: if already downloaded, return immediately
+                var cachedPath = GetCachedUpdatePath(downloadUrl);
+                if (cachedPath != null)
+                {
+                    progress?.Report(100);
+                    return cachedPath;
+                }
+                
+                var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                var targetDir = Path.Combine(localAppData, "BloxManager", "Updates");
+                
                 Directory.CreateDirectory(targetDir);
                 var fileName = Path.GetFileName(new Uri(downloadUrl).AbsolutePath);
                 if (string.IsNullOrWhiteSpace(fileName)) fileName = fileNameHint;
@@ -87,9 +113,11 @@ namespace BloxManager.Services
 
                 var totalBytes = response.Content.Headers.ContentLength;
                 using var contentStream = await response.Content.ReadAsStreamAsync();
-                using var fileStream = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.None, 8192, true);
+                
+                // Optimized buffer size and FileStream options
+                using var fileStream = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.None, 65536, true);
 
-                var buffer = new byte[8192];
+                var buffer = new byte[65536]; 
                 var totalRead = 0L;
                 int bytesRead;
 

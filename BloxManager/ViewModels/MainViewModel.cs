@@ -1,33 +1,35 @@
-using BloxManager.Models;
-using BloxManager.Helpers;
-using BloxManager.Services;
-using BloxManager.Views;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using BloxManager.Models;
+using BloxManager.Services;
 using Microsoft.Extensions.Logging;
-using Newtonsoft.Json.Linq;
 using System;
-using System.Collections.ObjectModel;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
-using System.Diagnostics;
-using System.Windows.Data;
-using System.ComponentModel;
 using System.Windows;
 
 namespace BloxManager.ViewModels
 {
-    public partial class MainViewModel : ObservableObject
+    public partial class MainViewModel : ObservableObject, IDisposable
     {
         private readonly ILogger<MainViewModel> _logger;
         private readonly ILoggerFactory _loggerFactory;
         private readonly IAccountService _accountService;
-        private readonly IGameService _gameService;
         private readonly ISettingsService _settingsService;
         private readonly IBrowserService _browserService;
-        private readonly IRobloxService _robloxService;
+        private readonly IGameService _gameService;
+
+        private CancellationTokenSource? _presenceRefreshCts;
+        private CancellationTokenSource? _uptimeCts;
+        private DateTime _sessionStartTime = DateTime.MinValue;
+        private int _prevAccountsInGame = 0;
+
+        // Keeps live AccountGroup objects so IsExpanded state is preserved across refreshes
+        private readonly Dictionary<string, AccountGroup> _groupCache = new();
 
         // ── Observable properties ────────────────────────────────────────────
 
@@ -38,73 +40,24 @@ namespace BloxManager.ViewModels
         private ObservableCollection<Account> _selectedAccounts = new();
 
         [ObservableProperty]
-        private ObservableCollection<string> _groups = new();
-
-        // FIX: Null reference warnings — initialise to non-null defaults
-        [ObservableProperty]
-        private Account? _selectedAccount = null;
-
-        [ObservableProperty]
-        private string _selectedGroup = "All";
-
-        [ObservableProperty]
-        private ObservableCollection<AccountGroup> _accountGroups = new();
-
-        [ObservableProperty]
-        private string _searchText = string.Empty;
-
-        [ObservableProperty]
-        private string _placeId = string.Empty;
-
-        [ObservableProperty]
-        private string _jobId = string.Empty;
-
-        [ObservableProperty]
-        private string _launchData = string.Empty;
-
-        [ObservableProperty]
-        private int _accountsInGame = 0;
-        [ObservableProperty]
-        private string _inGameUptimeText = "00:00:00";
-
-        [RelayCommand]
-        private void OpenSettings()
-        {
-            System.Diagnostics.Debug.WriteLine($"OpenSettings called - IsSettingsOpen was: {IsSettingsOpen}");
-            IsSettingsOpen = true;
-            System.Diagnostics.Debug.WriteLine($"OpenSettings completed - IsSettingsOpen now: {IsSettingsOpen}");
-        }
-
-        [RelayCommand]
-        private void OpenAccounts()
-        {
-            System.Diagnostics.Debug.WriteLine($"OpenAccounts called - IsSettingsOpen was: {IsSettingsOpen}");
-            IsSettingsOpen = false;
-            System.Diagnostics.Debug.WriteLine($"OpenAccounts completed - IsSettingsOpen now: {IsSettingsOpen}");
-        }
-
-        [ObservableProperty]
-        private bool _isLoading;
-
-        [ObservableProperty]
         private string _statusMessage = "Ready";
 
         [ObservableProperty]
-        private bool _multiRobloxEnabled;
+        private bool _isLoading = false;
+
+        [ObservableProperty]
+        private string _appVersion = "1.0.1";
+
+        [ObservableProperty]
+        private string _updateChannel = "Made By Mr Duck";
+
+        public string VersionChannelText => $"{AppVersion} {UpdateChannel}";
 
         [ObservableProperty]
         private bool _isSettingsOpen = false;
 
-        partial void OnIsSettingsOpenChanged(bool value)
-        {
-            System.Diagnostics.Debug.WriteLine($"IsSettingsOpen property changed to: {value}");
-        }
-
         [ObservableProperty]
-        private SettingsViewModel _settingsViewModel;
-
-        [ObservableProperty]
-        private string _backgroundImagePath = string.Empty;
+        private string _backgroundImagePath = "";
 
         [ObservableProperty]
         private string _backgroundImageStretch = "UniformToFill";
@@ -116,14 +69,45 @@ namespace BloxManager.ViewModels
         private double _backgroundImageOpacity = 1.0;
 
         [ObservableProperty]
-        private string _backgroundTargetDimensions = string.Empty;
-
+        private string _backgroundTargetDimensions = "1920x1080";
 
         [ObservableProperty]
-        private ObservableCollection<AccountListItem> _displayItems = new();
+        private ObservableCollection<string> _groups = new();
 
+        [ObservableProperty]
+        private ObservableCollection<AccountGroup> _accountGroups = new();
+
+        [ObservableProperty]
+        private Account? _selectedAccount = null;
+
+        [ObservableProperty]
+        private string _selectedGroup = "All";
+
+        [ObservableProperty]
+        private string _searchText = string.Empty;
+
+        [ObservableProperty]
+        private ObservableCollection<object> _displayItems = new();
 
         public ObservableCollection<string> AvailableGroupsForMove { get; } = new();
+
+        private readonly SettingsViewModel _settingsViewModel;
+        public SettingsViewModel SettingsViewModel => _settingsViewModel;
+
+        [ObservableProperty]
+        private string _placeId = "";
+
+        [ObservableProperty]
+        private string _jobId = "";
+
+        [ObservableProperty]
+        private string _launchData = "";
+
+        [ObservableProperty]
+        private int _accountsInGame = 0;
+
+        [ObservableProperty]
+        private string _inGameUptimeText = "00:00:00";
 
         // ── Constructor ──────────────────────────────────────────────────────
 
@@ -131,443 +115,719 @@ namespace BloxManager.ViewModels
             ILogger<MainViewModel> logger,
             ILoggerFactory loggerFactory,
             IAccountService accountService,
-            IGameService gameService,
             ISettingsService settingsService,
             IBrowserService browserService,
-            IRobloxService robloxService)
+            IGameService gameService)
         {
             _logger = logger;
             _loggerFactory = loggerFactory;
             _accountService = accountService;
-            _gameService = gameService;
             _settingsService = settingsService;
             _browserService = browserService;
-            _robloxService = robloxService;
+            _gameService = gameService;
 
-            _settingsViewModel = new SettingsViewModel(_loggerFactory.CreateLogger<SettingsViewModel>(), _settingsService, _gameService);
+            // Seed permanent groups
+            Groups.Add("All");
+            EnsureGroupExists("Default");
+
+            // SettingsViewModel
+            var settingsLogger = _loggerFactory.CreateLogger<SettingsViewModel>();
+            _settingsViewModel = new SettingsViewModel(settingsLogger, _settingsService, _gameService);
             _settingsViewModel.PropertyChanged += SettingsViewModel_PropertyChanged;
 
-            Groups.CollectionChanged += (s, e) => UpdateAvailableGroupsForMove();
-
-
-            Groups.CollectionChanged += (s, e) => UpdateAvailableGroupsForMove();
-            
-            AccountGroups.CollectionChanged += (s, e) => {
-                _ = SavePersistentGroupsAsync();
-            };
-
-            _ = LoadDataAsync();
-            _ = StartActiveAccountTrackingAsync();
-            InitializeVersionChannel();
+            // Async init — all UI mutations are marshalled to the UI thread inside
+            _ = InitializeAsync();
         }
 
-        [ObservableProperty]
-        private string _appVersion = string.Empty;
+        // ── Initialization ────────────────────────────────────────────────────
 
-        [ObservableProperty]
-        private string _updateChannel = "Made By Mr Duck";
-
-        public string VersionChannelText => $"{AppVersion} {UpdateChannel}";
-
-        private async void InitializeVersionChannel()
+        private async Task InitializeAsync()
         {
+            _logger.LogInformation("InitializeAsync started");
             try
             {
-                var fvi = FileVersionInfo.GetVersionInfo(Process.GetCurrentProcess().MainModule!.FileName);
-                var ver = fvi.FileVersion ?? "0.1.0.0";
-                // Show major.minor only by default
-                var parts = ver.Split('.');
-                var display = parts.Length >= 2 ? $"{parts[0]}.{parts[1]}" : ver;
-                AppVersion = $"v{display}";
-                UpdateChannel = "Made By Mr Duck";
-            }
-            catch
-            {
-                AppVersion = "v0.1";
-                UpdateChannel = "Made By Mr Duck";
-            }
-        }
+                await RunOnUiAsync(() => IsLoading = true);
+                await LoadBackgroundSettingsAsync();
 
-        private async Task StartActiveAccountTrackingAsync()
-        {
-            // Always run trackers; adjust frequency for low memory mode
-            var lowMem = await _settingsService.GetLowMemoryModeAsync();
-            var processIntervalMs = lowMem ? 30000 : 15000;
-            _ = Task.Run(async () =>
-            {
-                while (true)
+                var placeId = await _settingsService.GetPlaceIdAsync();
+                var jobId = await _settingsService.GetJobIdAsync();
+                var launchData = await _settingsService.GetLaunchDataAsync();
+                await RunOnUiAsync(() =>
                 {
-                    await UpdateActiveAccountsCountAsync();
-                    await Task.Delay(processIntervalMs); // interval for process checks
-                }
-            });
-            _ = Task.Run(async () =>
-            {
-                UpdateInGameUptimeText(); // seed immediately
-                while (true)
-                {
-                    UpdateInGameUptimeText();
-                    await Task.Delay(1000); // Update timer every second
-                }
-            });
-        }
+                    PlaceId = placeId;
+                    JobId = jobId;
+                    LaunchData = launchData;
+                });
 
-        private async Task UpdateActiveAccountsCountAsync()
-        {
-            try
-            {
-                int activeCount = 0;
-                var accounts = Accounts.ToList();
-                
-                foreach (var account in accounts)
-                {
-                    bool isLocalRunning = await _gameService.IsGameRunningAsync(account);
-                    AccountStatus newStatus = AccountStatus.Offline;
-
-                    if (isLocalRunning)
-                    {
-                        newStatus = AccountStatus.InGame;
-                    }
-                    else if (account.UserId > 0)
-                    {
-                        try
-                        {
-                            var presence = await _robloxService.GetUserPresenceAsync(account.UserId);
-                            if (presence != null)
-                            {
-                                // UserPresenceType: 0 = Offline, 1 = Online, 2 = InGame, 3 = Studio
-                                switch (presence.UserPresenceType)
-                                {
-                                    case 2:
-                                        // If API says InGame but no local process, it's likely a ghost.
-                                        // We'll set it to Offline to avoid confusing the user.
-                                        newStatus = AccountStatus.Offline;
-                                        break;
-                                    case 1:
-                                    case 3:
-                                        // Online/Studio. Only show Blue if it was recently active to avoid 5-min ghosts.
-                                        // For now, let's keep it blue but we could gate it by LastUsed.
-                                        newStatus = AccountStatus.Online;
-                                        break;
-                                    default:
-                                        newStatus = AccountStatus.Offline;
-                                        break;
-                                }
-                            }
-                        }
-                        catch { }
-                    }
-
-                    if (newStatus == AccountStatus.InGame)
-                    {
-                        activeCount++;
-                        if (account.InGameSince == null)
-                            account.InGameSince = DateTime.Now;
-                    }
-                    else
-                    {
-                        account.InGameSince = null;
-                    }
-
-                    if (account.Status != newStatus)
-                    {
-                        account.Status = newStatus;
-                    }
-                }
-                
-                if (AccountsInGame != activeCount)
-                {
-                    AccountsInGame = activeCount;
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to update active accounts count");
-            }
-        }
-
-        private void UpdateInGameUptimeText()
-        {
-            try
-            {
-                var since = Accounts.Where(a => a.InGameSince != null)
-                                    .Select(a => a.InGameSince!.Value)
-                                    .DefaultIfEmpty(DateTime.MinValue)
-                                    .Min();
-                if (since == DateTime.MinValue)
-                {
-                    if (InGameUptimeText != "00:00:00") InGameUptimeText = "00:00:00";
-                    return;
-                }
-                var span = DateTime.Now - since;
-                var text = span.TotalHours >= 1
-                    ? $"{(int)span.TotalHours:D2}:{span.Minutes:D2}:{span.Seconds:D2}"
-                    : $"{span.Minutes:D2}:{span.Seconds:D2}";
-                if (InGameUptimeText != text) InGameUptimeText = text;
-            }
-            catch
-            {
-                // ignore timer errors
-            }
-        }
-
-        // ── Data loading ─────────────────────────────────────────────────────
-
-        private async Task LoadDataAsync()
-        {
-            IsLoading = true;
-            StatusMessage = "Loading accounts...";
-
-            try
-            {
                 await LoadAccountsAsync();
-                await LoadGroupsAsync();
-                await LoadSettingsAsync();
+
+                StartPresenceRefreshLoop();
+                StartUptimeTrackingLoop();
+
+                await RunOnUiAsync(() =>
+                {
+                    UpdateDisplayItems();
+                    StatusMessage = "Ready";
+                });
+                _logger.LogInformation("InitializeAsync completed");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to load initial data");
-                StatusMessage = "Error loading data";
+                _logger.LogError(ex, "Startup failed");
+                await RunOnUiAsync(() => StatusMessage = "Startup error — check logs");
             }
             finally
             {
-                IsLoading = false;
-                StatusMessage = "Ready";
+                await RunOnUiAsync(() => IsLoading = false);
+            }
+        }
+
+        private async Task LoadBackgroundSettingsAsync()
+        {
+            _logger.LogInformation("LoadBackgroundSettingsAsync started");
+            try
+            {
+                var path      = await _settingsService.GetSettingAsync<string>("BackgroundImagePath")       ?? "";
+                var stretch   = await _settingsService.GetSettingAsync<string>("BackgroundImageStretch")    ?? "UniformToFill";
+                var alignment = await _settingsService.GetSettingAsync<string>("BackgroundImageAlignment")  ?? "Center";
+                var opacity   = await _settingsService.GetSettingAsync<double>("BackgroundImageOpacity", 1.0);
+                var dims      = await _settingsService.GetSettingAsync<string>("BackgroundTargetDimensions") ?? "1920x1080";
+
+                _logger.LogInformation("Setting background settings on UI thread...");
+                await RunOnUiAsync(() =>
+                {
+                    BackgroundImagePath        = path;
+                    BackgroundImageStretch     = stretch;
+                    BackgroundImageAlignment   = alignment;
+                    BackgroundImageOpacity     = opacity;
+                    BackgroundTargetDimensions = dims;
+                });
+                _logger.LogInformation("LoadBackgroundSettingsAsync completed");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to load background settings");
+                await RunOnUiAsync(() =>
+                {
+                    BackgroundImagePath        = "";
+                    BackgroundImageStretch     = "UniformToFill";
+                    BackgroundImageAlignment   = "Center";
+                    BackgroundImageOpacity     = 1.0;
+                    BackgroundTargetDimensions = "1920x1080";
+                });
             }
         }
 
         private async Task LoadAccountsAsync()
         {
-            var accounts = await _accountService.GetAccountsAsync();
-            Accounts.Clear();
-            foreach (var account in accounts)
+            _logger.LogInformation("Loading accounts...");
+            try
             {
-                // Set default status for existing accounts without status
-                if (account.Status == AccountStatus.Unknown)
-                    account.Status = AccountStatus.Offline;
+                var accounts = await _accountService.GetAccountsAsync();
+                if (accounts == null) 
+                {
+                    _logger.LogWarning("GetAccountsAsync returned null");
+                    return;
+                }
+
+                _logger.LogInformation("Normalising {Count} accounts...", accounts.Count);
+                // Normalise off the UI thread
+                var normalised = accounts.Select(a =>
+                {
+                    if (a.Status == AccountStatus.Unknown) a.Status = AccountStatus.Offline;
+                    if (string.IsNullOrEmpty(a.Group))     a.Group  = "Default";
+                    return a;
+                }).ToList();
+
+                _logger.LogInformation("Adding accounts to collection on UI thread...");
+                // All collection mutations on the UI thread
+                await RunOnUiAsync(() =>
+                {
+                    Accounts.Clear();
+                    foreach (var a in normalised)
+                        Accounts.Add(a);
+
+                    RebuildGroupsFromAccounts();
+                    UpdateDisplayItems();
+                    UpdateAccountsInGame(); // Initialize the count
+                });
+                _logger.LogInformation("LoadAccountsAsync completed");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to load accounts");
+            }
+        }
+
+        private void StartPresenceRefreshLoop()
+        {
+            try
+            {
+                _presenceRefreshCts?.Cancel();
+                _presenceRefreshCts = new CancellationTokenSource();
+                var token = _presenceRefreshCts.Token;
+
+                _ = Task.Run(() => PresenceRefreshLoopAsync(token), token);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to start presence refresh loop");
+            }
+        }
+
+        private async Task PresenceRefreshLoopAsync(CancellationToken token)
+        {
+            try { await Task.Delay(500, token); } catch { return; }
+
+            while (!token.IsCancellationRequested)
+            {
+                try
+                {
+                    var roblox = App.GetService<IRobloxService>();
+
+                    var accounts = Accounts.ToList();
+                    _logger.LogInformation("Processing {Count} accounts for presence refresh", accounts.Count);
+
+                    var ids = accounts.Where(a => a.UserId > 0).Select(a => a.UserId).Distinct().ToArray();
+                    var presenceDict = await roblox.GetUsersPresenceAsync(ids);
+
+                    foreach (var account in accounts)
+                    {
+                        if (token.IsCancellationRequested) break;
+
+                        _logger.LogDebug("Processing account: {Username}, UserId: {UserId}, IsValid: {IsValid}", 
+                            account.Username, account.UserId, account.IsValid);
+
+                        if (account.UserId <= 0)
+                        {
+                            _logger.LogDebug("Setting account {Username} to Offline due to invalid UserId: {UserId}", 
+                                account.Username, account.UserId);
+                            
+                            await RunOnUiAsync(() =>
+                            {
+                                var oldStatus = account.Status;
+                                account.Status = AccountStatus.Offline;
+                                _logger.LogDebug("Updated account {Username}: {OldStatus} -> {NewStatus}", 
+                                    account.Username, oldStatus, AccountStatus.Offline);
+                            });
+                            continue;
+                        }
+
+                        presenceDict.TryGetValue(account.UserId, out var presence);
+
+                        string? avatarUrl = null;
+                        if (string.IsNullOrWhiteSpace(account.AvatarUrl))
+                        {
+                            try
+                            {
+                                avatarUrl = await roblox.GetUserAvatarUrlAsync(account.UserId);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogDebug(ex, "Avatar fetch failed for {Username}", account.Username);
+                            }
+                        }
+
+                        var status = AccountStatus.Offline;
+                        if (presence != null)
+                        {
+                            // Prefer numeric type for reliability:
+                            // 0=Offline, 1=Online, 2=InGame, 3=Studio
+                            status = presence.UserPresenceType switch
+                            {
+                                2 => AccountStatus.InGame,
+                                1 => AccountStatus.Online,
+                                3 => AccountStatus.Online, // Treat Studio as online
+                                _ => AccountStatus.Offline
+                            };
+                        }
+
+                        // Check if account is expired by testing CSRF token
+                        if (status != AccountStatus.Expired && !string.IsNullOrWhiteSpace(account.SecurityToken))
+                        {
+                            try
+                            {
+                                var csrfTest = await roblox.TestCsrfTokenAsync(account.SecurityToken);
+                                if (!csrfTest)
+                                {
+                                    status = AccountStatus.Expired;
+                                    _logger.LogInformation("Account {Username} marked as Expired due to CSRF test failure", account.Username);
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogDebug(ex, "CSRF test failed for {Username}", account.Username);
+                                status = AccountStatus.Expired;
+                            }
+                        }
+
+                        await RunOnUiAsync(() =>
+                        {
+                            var oldStatus = account.Status;
+                            if (presence != null)
+                                account.Presence = presence;
+
+                            account.Status = status;
+
+                            if (status == AccountStatus.InGame)
+                            {
+                                if (!account.InGameSince.HasValue)
+                                    account.InGameSince = DateTime.Now;
+                            }
+                            else
+                            {
+                                account.InGameSince = null;
+                            }
+
+                            if (!string.IsNullOrWhiteSpace(avatarUrl))
+                                account.AvatarUrl = avatarUrl;
+                                
+                            _logger.LogDebug("Updated account {Username}: {OldStatus} -> {NewStatus}", 
+                                account.Username, oldStatus, status);
+                        });
+
+                    }
+
+                    UpdateAccountsInGame();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Presence refresh loop tick failed");
+                }
+
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(5), token);
+                }
+                catch
+                {
+                    return;
+                }
+            }
+        }
+
+        private void UpdateAccountsInGame()
+        {
+            try
+            {
+                var totalAccounts = Accounts.Count;
+                var inGameCount = Accounts.Count(a => a.Status == AccountStatus.InGame);
+                var onlineCount = Accounts.Count(a => a.Status == AccountStatus.Online);
+                var offlineCount = Accounts.Count(a => a.Status == AccountStatus.Offline);
+                var expiredCount = Accounts.Count(a => a.Status == AccountStatus.Expired);
                 
-                // Load avatar URL if not already set
-                if (string.IsNullOrEmpty(account.AvatarUrl) && account.UserId > 0)
+                _logger.LogInformation("Account Status Summary - Total: {Total}, InGame: {InGame}, Online: {Online}, Offline: {Offline}, Expired: {Expired}", 
+                    totalAccounts, inGameCount, onlineCount, offlineCount, expiredCount);
+                
+                if (AccountsInGame != inGameCount)
+                {
+                    _prevAccountsInGame = AccountsInGame;
+                    AccountsInGame = inGameCount;
+                    _logger.LogInformation("Updated AccountsInGame to {Count}", inGameCount);
+
+                    // Start session uptime when first account joins in-game
+                    if (_prevAccountsInGame <= 0 && inGameCount > 0)
+                    {
+                        var earliest = Accounts
+                            .Where(a => a.Status == AccountStatus.InGame && a.InGameSince.HasValue)
+                            .Select(a => a.InGameSince!.Value)
+                            .DefaultIfEmpty(DateTime.Now)
+                            .Min();
+                        _sessionStartTime = earliest;
+                        _logger.LogInformation("Session start time set to {Start}", _sessionStartTime);
+                    }
+
+                    // Reset uptime when no accounts are in-game
+                    if (inGameCount == 0)
+                    {
+                        _sessionStartTime = DateTime.MinValue;
+                        InGameUptimeText = "00:00:00";
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to update accounts in game count");
+            }
+        }
+
+        private void StartUptimeTrackingLoop()
+        {
+            try
+            {
+                _uptimeCts?.Cancel();
+                _uptimeCts = new CancellationTokenSource();
+                var token = _uptimeCts.Token;
+
+                _ = Task.Run(() => UptimeTrackingLoopAsync(token), token);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to start uptime tracking loop");
+            }
+        }
+
+        private async Task UptimeTrackingLoopAsync(CancellationToken token)
+        {
+            // Short initial delay so the UI can settle
+            try { await Task.Delay(1000, token); } catch { return; }
+
+            while (!token.IsCancellationRequested)
+            {
+                try
+                {
+                    if (AccountsInGame <= 0 || _sessionStartTime == DateTime.MinValue)
+                    {
+                        await RunOnUiAsync(() => InGameUptimeText = "00:00:00");
+                    }
+                    else
+                    {
+                        var uptime = DateTime.Now - _sessionStartTime;
+                        var uptimeText = $"{uptime.Hours:D2}:{uptime.Minutes:D2}:{uptime.Seconds:D2}";
+                        await RunOnUiAsync(() => InGameUptimeText = uptimeText);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Uptime tracking loop tick failed");
+                }
+
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(1), token);
+                }
+                catch
+                {
+                    return;
+                }
+            }
+        }
+
+        // ── Group helpers ─────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Returns the cached AccountGroup for <paramref name="name"/>, creating it if needed.
+        /// Preserves IsExpanded state across display refreshes.
+        /// Must be called on the UI thread.
+        /// </summary>
+        private AccountGroup EnsureGroupExists(string name)
+        {
+            if (!_groupCache.TryGetValue(name, out var group))
+            {
+                group = new AccountGroup(name) { IsExpanded = true };
+                _groupCache[name] = group;
+            }
+
+            if (!Groups.Contains(name))
+                Groups.Add(name);
+
+            return group;
+        }
+
+        private void RebuildGroupsFromAccounts()
+        {
+            foreach (var groupName in Accounts
+                         .Where(a => !string.IsNullOrEmpty(a.Group))
+                         .Select(a => a.Group)
+                         .Distinct())
+            {
+                EnsureGroupExists(groupName);
+            }
+
+            SyncAvailableGroupsForMove();
+        }
+
+        private void SyncAvailableGroupsForMove()
+        {
+            var moveGroups = Groups.Where(g => g != "All").ToList();
+            var toRemove   = AvailableGroupsForMove.Where(g => !moveGroups.Contains(g)).ToList();
+            foreach (var g in toRemove) AvailableGroupsForMove.Remove(g);
+            foreach (var g in moveGroups)
+                if (!AvailableGroupsForMove.Contains(g))
+                    AvailableGroupsForMove.Add(g);
+        }
+
+        // ── Display items ─────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Rebuilds DisplayItems. Must be called on the UI thread.
+        /// </summary>
+        public void UpdateDisplayItems()
+        {
+            try
+            {
+                DisplayItems.Clear();
+
+                var filtered = string.IsNullOrWhiteSpace(SearchText)
+                    ? Accounts.AsEnumerable()
+                    : Accounts.Where(a => a.Username.Contains(SearchText, StringComparison.OrdinalIgnoreCase));
+
+                var groupNamesToShow = SelectedGroup == "All"
+                    ? Groups.Where(g => g != "All").ToList()
+                    : new List<string> { SelectedGroup };
+
+                foreach (var groupName in groupNamesToShow)
+                {
+                    var group = EnsureGroupExists(groupName);
+
+                    // Sync child list on the cached group object
+                    group.Accounts.Clear();
+                    var accountsInGroup = filtered.Where(a => a.Group == groupName).ToList();
+                    foreach (var account in accountsInGroup)
+                        group.Accounts.Add(account);
+
+                    DisplayItems.Add(group);
+
+                    if (group.IsExpanded)
+                        foreach (var account in accountsInGroup)
+                            DisplayItems.Add(account);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "UpdateDisplayItems failed");
+            }
+        }
+
+        partial void OnSelectedGroupChanged(string value) => UpdateDisplayItems();
+        partial void OnSearchTextChanged(string value)    => UpdateDisplayItems();
+
+        // ── Settings sync ─────────────────────────────────────────────────────
+
+        private async void SettingsViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+        {
+            try
+            {
+                switch (e.PropertyName)
+                {
+                    case nameof(SettingsViewModel.BackgroundImagePath):
+                    {
+                        var value = _settingsViewModel.BackgroundImagePath;
+                        await RunOnUiAsync(() => BackgroundImagePath = value);
+                        _ = _settingsService.SetSettingAsync("BackgroundImagePath", value);
+                        break;
+                    }
+                    case nameof(SettingsViewModel.BackgroundImageStretch):
+                    {
+                        var value = _settingsViewModel.BackgroundImageStretch;
+                        await RunOnUiAsync(() => BackgroundImageStretch = value);
+                        _ = _settingsService.SetSettingAsync("BackgroundImageStretch", value);
+                        break;
+                    }
+                    case nameof(SettingsViewModel.BackgroundImageAlignment):
+                    {
+                        var value = _settingsViewModel.BackgroundImageAlignment;
+                        await RunOnUiAsync(() => BackgroundImageAlignment = value);
+                        _ = _settingsService.SetSettingAsync("BackgroundImageAlignment", value);
+                        break;
+                    }
+                    case nameof(SettingsViewModel.BackgroundImageOpacity):
+                    {
+                        var value = _settingsViewModel.BackgroundImageOpacity;
+                        await RunOnUiAsync(() => BackgroundImageOpacity = value);
+                        _ = _settingsService.SetSettingAsync("BackgroundImageOpacity", value);
+                        break;
+                    }
+                    case nameof(SettingsViewModel.PlaceId):
+                    {
+                        var value = _settingsViewModel.PlaceId;
+                        await RunOnUiAsync(() => PlaceId = value);
+                        break;
+                    }
+                    case nameof(SettingsViewModel.JobId):
+                    {
+                        var value = _settingsViewModel.JobId;
+                        await RunOnUiAsync(() => JobId = value);
+                        break;
+                    }
+                    case nameof(SettingsViewModel.LaunchData):
+                    {
+                        var value = _settingsViewModel.LaunchData;
+                        await RunOnUiAsync(() => LaunchData = value);
+                        break;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to sync background setting {Property}", e.PropertyName);
+            }
+        }
+
+        // ── Commands ──────────────────────────────────────────────────────────
+
+        private static bool TryParsePlaceId(string? input, out long placeId)
+        {
+            placeId = 0;
+            if (string.IsNullOrWhiteSpace(input)) return false;
+
+            var trimmed = input.Trim();
+            if (long.TryParse(trimmed, out placeId) && placeId > 0) return true;
+
+            // Accept common Roblox URL formats, e.g. https://www.roblox.com/games/123456789/My-Game
+            var match = Regex.Match(trimmed, @"roblox\.com/(?:[a-z]{2}/)?games/(?<id>\d+)", RegexOptions.IgnoreCase);
+            if (match.Success && long.TryParse(match.Groups["id"].Value, out placeId) && placeId > 0) return true;
+
+            // Fallback: first long-looking number in the string
+            match = Regex.Match(trimmed, @"(?<id>\d{5,})");
+            if (match.Success && long.TryParse(match.Groups["id"].Value, out placeId) && placeId > 0) return true;
+
+            placeId = 0;
+            return false;
+        }
+
+        [RelayCommand]
+        private async Task Refresh()
+        {
+            try
+            {
+                StatusMessage = "Refreshing...";
+                IsLoading = true;
+                await LoadAccountsAsync();
+                StatusMessage = "Ready";
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Refresh failed");
+                StatusMessage = "Refresh failed";
+            }
+            finally
+            {
+                IsLoading = false;
+            }
+        }
+
+        [RelayCommand]
+        private void Exit()
+        {
+            try { Application.Current.Shutdown(); }
+            catch { /* ignore */ }
+        }
+
+        [RelayCommand]
+        private async Task LaunchSelectedAccounts()
+        {
+            if (!SelectedAccounts.Any()) { StatusMessage = "No accounts selected"; return; }
+
+            try
+            {
+                IsLoading = true;
+                StatusMessage = $"Launching {SelectedAccounts.Count} account(s)...";
+                int successCount = 0;
+
+                if (SelectedAccounts.Count > 1)
                 {
                     try
                     {
-                        account.AvatarUrl = await _robloxService.GetUserAvatarUrlAsync(account.UserId) ?? string.Empty;
+                        await _settingsService.SetMultiRobloxEnabledAsync(true);
+                        await RunOnUiAsync(() => _settingsViewModel.MultiRobloxEnabled = true);
                     }
-                    catch
+                    catch (Exception ex)
                     {
-                        // Avatar loading failed, continue without avatar
-                        account.AvatarUrl = string.Empty;
+                        _logger.LogWarning(ex, "Failed to enable MultiRoblox before multi-launch");
                     }
                 }
-                
-                Accounts.Add(account);
-            }
-        }
 
-        private async Task LoadGroupsAsync()
-        {
-            var persistentGroups = await _settingsService.GetPersistentGroupsAsync();
-            Groups.Clear();
-            Groups.Add("All");
-            Groups.Add("Default");
+                var hasPlaceId = TryParsePlaceId(PlaceId, out var placeId);
+                var jobIdVal = string.IsNullOrWhiteSpace(JobId) ? null : JobId.Trim().Trim('"');
+                var launchDataVal = string.IsNullOrWhiteSpace(LaunchData) ? null : LaunchData.Trim();
 
-            
-            foreach (var g in persistentGroups)
-            {
-                if (!Groups.Contains(g))
-                    Groups.Add(g);
-            }
-
-            // Also add any groups found in accounts
-            var accountGroups = await _accountService.GetGroupsAsync();
-            foreach (var g in accountGroups)
-            {
-                if (!Groups.Contains(g))
-                    Groups.Add(g);
-            }
-
-            UpdateAvailableGroupsForMove();
-            UpdateDisplayItems();
-        }
-
-        public void UpdateDisplayItems()
-        {
-            var oldDisplayItems = DisplayItems.ToList();
-            DisplayItems.Clear();
-            
-            var groupsToShow = SelectedGroup == "All" 
-                ? Groups.Where(g => g != "All").ToList()
-                : new List<string> { SelectedGroup };
-
-            var accountsByGroup = Accounts.GroupBy(a => a.Group).ToDictionary(g => g.Key, g => g.ToList());
-
-            foreach (var groupName in groupsToShow)
-            {
-                // Try to find existing group object to preserve expansion state
-                var groupItem = oldDisplayItems.OfType<AccountGroup>().FirstOrDefault(g => g.Name == groupName) 
-                               ?? new AccountGroup(groupName);
-                
-                groupItem.Accounts.Clear();
-                if (accountsByGroup.TryGetValue(groupName, out var accountsForGroup))
+                foreach (var account in SelectedAccounts.ToList())
                 {
-                    foreach (var acc in accountsForGroup) groupItem.Accounts.Add(acc);
-                }
-
-                DisplayItems.Add(groupItem);
-
-                System.Diagnostics.Debug.WriteLine($"Group: {groupItem.Name}, IsExpanded: {groupItem.IsExpanded}, Account count: {groupItem.Accounts.Count}");
-
-                if (groupItem.IsExpanded)
-                {
-                    if (accountsByGroup.TryGetValue(groupName, out var accountsInGroup))
+                    try
                     {
-                        var filteredAccounts = accountsInGroup
-                            .Where(a => string.IsNullOrEmpty(SearchText) || a.Username.Contains(SearchText, StringComparison.OrdinalIgnoreCase))
-                            .OrderBy(a => a.SortOrder)
-                            .ThenBy(a => a.Username);
+                        StatusMessage = $"Launching {account.Username}...";
+                        bool launched = false;
 
-                        foreach (var account in filteredAccounts)
+                        if (hasPlaceId)
                         {
-                            DisplayItems.Add(account);
-                            System.Diagnostics.Debug.WriteLine($"  Added account: {account.Username}");
+                            _logger.LogInformation("JoinServer request: User={Username} PlaceId={PlaceId} JobId={JobId} LaunchData={LaunchData}",
+                                account.Username,
+                                placeId,
+                                jobIdVal ?? "<null>",
+                                launchDataVal ?? "<null>");
+
+                            launched = await _gameService.JoinGameAsync(account, placeId, jobIdVal, launchDataVal);
+                            if (!launched)
+                            {
+                                _logger.LogWarning("JoinServer failed for account {Username}. PlaceId={PlaceId} JobId={JobId} LaunchData={LaunchData}",
+                                    account.Username, placeId, jobIdVal ?? "<null>", launchDataVal ?? "<null>");
+                                StatusMessage = $"Failed to launch Roblox for {account.Username} (check PlaceId/JobId/LaunchData)";
+                                continue;
+                            }
                         }
+                        else
+                        {
+                            // No PlaceId provided: browser login is the intended fallback
+                            launched = await _browserService.LaunchBrowserAsync(account);
+                        }
+
+                        if (launched)
+                        {
+                            successCount++;
+                            StatusMessage = $"Launched {account.Username}";
+                            await RunOnUiAsync(() =>
+                            {
+                                if (account.Status != AccountStatus.InGame)
+                                    account.Status = AccountStatus.Online;
+                            });
+                        }
+                        else
+                        {
+                            StatusMessage = $"Failed to launch {account.Username}";
+                        }
+
+                        account.LastUsed = DateTime.Now;
+                        await _accountService.UpdateAccountAsync(account);
+
+                        await Task.Delay(250);
                     }
-                }
-                else
-                {
-                    System.Diagnostics.Debug.WriteLine($"  Group {groupItem.Name} is collapsed - accounts hidden");
-                }
-            }
-            
-            System.Diagnostics.Debug.WriteLine($"Total display items: {DisplayItems.Count}");
-        }
-
-
-        [RelayCommand]
-        private async Task MoveItemAsync(DragEventArgs e)
-        {
-            // This will be called from code-behind after drag-drop logic determines the move
-        }
-
-        public async Task ReorderItemsAsync(int oldIndex, int newIndex)
-        {
-            if (oldIndex < 0 || newIndex < 0 || oldIndex >= DisplayItems.Count || newIndex >= DisplayItems.Count) return;
-
-            var items = DisplayItems.ToList();
-            var itemToMove = items[oldIndex];
-            items.RemoveAt(oldIndex);
-            items.Insert(newIndex, itemToMove);
-
-            // Re-calculate all sort orders based on the new list
-            int order = 0;
-            string currentGroup = "Default";
-            int groupCount = 0;
-            
-            foreach (var item in items)
-            {
-                if (item is AccountGroup group)
-                {
-                    currentGroup = group.Name;
-                    // Update the Groups collection order
-                    int groupIdx = Groups.IndexOf(group.Name);
-                    if (groupIdx != -1)
+                    catch (Exception ex)
                     {
-                        Groups.Move(groupIdx, Math.Min(groupCount++, Groups.Count - 1));
+                        _logger.LogError(ex, "Failed to launch account {Username}", account.Username);
+                        StatusMessage = $"Error launching {account.Username}";
                     }
                 }
-                else if (item is Account account)
-                {
-                    account.SortOrder = order++;
-                    account.Group = currentGroup;
-                    await _accountService.UpdateAccountAsync(account);
-                }
+
+                StatusMessage = $"Launched {successCount}/{SelectedAccounts.Count} account(s)";
             }
-
-            await SavePersistentGroupsAsync();
-            UpdateDisplayItems();
-        }
-
-
-        private async Task SavePersistentGroupsAsync()
-        {
-            var currentGroups = Groups.Where(g => g != "All").ToList();
-            await _settingsService.SetPersistentGroupsAsync(currentGroups);
-        }
-
-
-        private void UpdateAvailableGroupsForMove()
-        {
-            var moveGroups = Groups.Where(g => g != "All").ToList();
-            
-            // Sync AvailableGroupsForMove with the actual list
-            // We do this instead of replacing the collection to keep bindings alive
-            var toRemove = AvailableGroupsForMove.Where(g => !moveGroups.Contains(g)).ToList();
-            foreach (var g in toRemove) AvailableGroupsForMove.Remove(g);
-            
-            foreach (var g in moveGroups)
+            catch (Exception ex)
             {
-                if (!AvailableGroupsForMove.Contains(g))
-                    AvailableGroupsForMove.Add(g);
+                _logger.LogError(ex, "LaunchSelectedAccounts failed");
+                StatusMessage = "Error launching accounts";
             }
+            finally { IsLoading = false; }
         }
-
-
-        private async Task LoadSettingsAsync()
-        {
-            MultiRobloxEnabled = await _settingsService.GetMultiRobloxEnabledAsync();
-            PlaceId = await _settingsService.GetPlaceIdAsync();
-            JobId = await _settingsService.GetJobIdAsync();
-            LaunchData = await _settingsService.GetLaunchDataAsync();
-            
-            BackgroundImagePath = await _settingsService.GetSettingAsync<string>("BackgroundImagePath");
-            BackgroundImageStretch = await _settingsService.GetSettingAsync<string>("BackgroundImageStretch") ?? "UniformToFill";
-            BackgroundImageAlignment = await _settingsService.GetSettingAsync<string>("BackgroundImageAlignment") ?? "Center";
-            BackgroundImageOpacity = await _settingsService.GetSettingAsync<double>("BackgroundImageOpacity", 1.0);
-        }
-
-        private void SettingsViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
-        {
-            switch (e.PropertyName)
-            {
-                case nameof(SettingsViewModel.BackgroundImagePath):
-                    BackgroundImagePath = SettingsViewModel.BackgroundImagePath;
-                    break;
-                case nameof(SettingsViewModel.BackgroundImageStretch):
-                    BackgroundImageStretch = SettingsViewModel.BackgroundImageStretch;
-                    break;
-                case nameof(SettingsViewModel.BackgroundImageAlignment):
-                    BackgroundImageAlignment = SettingsViewModel.BackgroundImageAlignment;
-                    break;
-                case nameof(SettingsViewModel.BackgroundImageOpacity):
-                    BackgroundImageOpacity = SettingsViewModel.BackgroundImageOpacity;
-                    break;
-                case nameof(SettingsViewModel.PlaceId):
-                    PlaceId = SettingsViewModel.PlaceId;
-                    break;
-                case nameof(SettingsViewModel.JobId):
-                    JobId = SettingsViewModel.JobId;
-                    break;
-                case nameof(SettingsViewModel.LaunchData):
-                    LaunchData = SettingsViewModel.LaunchData;
-                    break;
-            }
-        }
-
-        // ── Commands ─────────────────────────────────────────────────────────
 
         [RelayCommand]
-        private async Task AddAccountAsync()
+        private void OpenSettings() => IsSettingsOpen = true;
+
+        [RelayCommand]
+        private void OpenAccounts() => IsSettingsOpen = false;
+
+        [RelayCommand]
+        private void Help()
         {
-            // This is the manual login option
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "https://github.com/JakeBx99/Roblox-Account-Manager",
+                    UseShellExecute = true
+                });
+            }
+            catch { /* ignore */ }
+        }
+
+        [RelayCommand]
+        private async Task AddAccount()
+        {
             try
             {
                 StatusMessage = "Opening Roblox login...";
                 IsLoading = true;
 
-                var browserService = App.GetService<IBrowserService>();
-                var accountService = App.GetService<IAccountService>();
-
-                var loginInfo = await browserService.AcquireRobloxLoginInfoAsync();
+                var loginInfo = await _browserService.AcquireRobloxLoginInfoAsync();
                 if (loginInfo == null || string.IsNullOrWhiteSpace(loginInfo.SecurityToken))
                 {
                     StatusMessage = "Login cancelled or no cookie detected.";
@@ -575,837 +835,238 @@ namespace BloxManager.ViewModels
                 }
 
                 StatusMessage = "Adding account...";
-                var account = await accountService.LoginWithCookieAsync(loginInfo.SecurityToken.Trim());
-                if (account == null)
-                {
-                    StatusMessage = "Failed to add account. Invalid cookie?";
-                    return;
-                }
+                var account = await _accountService.LoginWithCookieAsync(loginInfo.SecurityToken.Trim());
+                if (account == null) { StatusMessage = "Failed to add account. Invalid cookie?"; return; }
 
-                // Apply captured password
                 account.Password = loginInfo.Password;
-                await accountService.UpdateAccountAsync(account);
+                if (string.IsNullOrEmpty(account.Group)) account.Group = "Default";
+                await _accountService.UpdateAccountAsync(account);
+
+                Accounts.Add(account);
+                EnsureGroupExists(account.Group);
+                SyncAvailableGroupsForMove();
+                UpdateDisplayItems();
 
                 StatusMessage = $"Added {account.Username}";
-                await LoadAccountsAsync();
-                await LoadGroupsAsync();
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to add account");
+                _logger.LogError(ex, "AddAccount failed");
                 StatusMessage = "Error adding account";
             }
-            finally
-            {
-                IsLoading = false;
-            }
+            finally { IsLoading = false; }
         }
 
         [RelayCommand]
-        private async Task AddAccountUserPassAsync()
+        private async Task AddAccountUserPass()
         {
             try
             {
-                var prompt = new PromptWindow("Add Account", "Enter one or more User:Pass lines (e.g. user:pass)");
-                if (prompt.ShowDialog() == true)
+                var prompt = new BloxManager.Views.PromptWindow("Add Account", "Enter one or more User:Pass lines (e.g. user:pass)");
+                if (prompt.ShowDialog() != true) return;
+
+                var lines = (prompt.InputText ?? string.Empty)
+                    .Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(l => l.Trim())
+                    .Where(l => l.Contains(':'))
+                    .ToList();
+
+                if (lines.Count == 0) { StatusMessage = "No valid lines. Use user:pass per line."; return; }
+
+                IsLoading = true;
+                int success = 0, fail = 0, skipped = 0;
+
+                var existingUsers = new HashSet<string>(
+                    (await _accountService.GetAccountsAsync()).Select(a => a.Username),
+                    StringComparer.OrdinalIgnoreCase);
+
+                foreach (var line in lines)
                 {
-                    var input = prompt.InputText ?? string.Empty;
-                    var lines = input
-                        .Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries)
-                        .Select(l => l.Trim())
-                        .Where(l => l.Contains(":"))
-                        .ToList();
+                    var parts    = line.Split(':', 2);
+                    var username = parts[0].Trim();
+                    var password = parts[1].Trim();
 
-                    if (lines.Count == 0)
-                    {
-                        StatusMessage = "No valid lines. Use user:pass per line.";
-                        return;
-                    }
+                    if (existingUsers.Contains(username)) { skipped++; continue; }
 
-                    IsLoading = true;
-                    int success = 0, fail = 0, skipped = 0;
-                    var existingUsers = new HashSet<string>(
-                        (await _accountService.GetAccountsAsync()).Select(a => a.Username),
-                        StringComparer.OrdinalIgnoreCase);
-                    foreach (var line in lines)
-                    {
-                        var parts = line.Split(':', 2);
-                        var username = parts[0].Trim();
-                        var password = parts[1].Trim();
-                        if (existingUsers.Contains(username))
-                        {
-                            skipped++;
-                            continue;
-                        }
-                        StatusMessage = $"Logging in via browser as {username}...";
-                        var account = await _accountService.LoginAsync(username, password, keepBrowserOpenUntilSuccess: true);
-                        if (account != null)
-                        {
-                            existingUsers.Add(username);
-                            success++;
-                        }
-                        else
-                        {
-                            fail++;
-                        }
-                    }
+                    StatusMessage = $"Logging in as {username}...";
+                    var account = await _accountService.LoginAsync(username, password, keepBrowserOpenUntilSuccess: true);
 
-                    await LoadAccountsAsync();
-                    await LoadGroupsAsync();
-                    StatusMessage = $"Added {success}, {fail} failed, {skipped} skipped (duplicates)";
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to add account via User:Pass");
-                StatusMessage = "Error adding account";
-            }
-            finally
-            {
-                IsLoading = false;
-            }
-        }
-
-        [RelayCommand]
-        private async Task AddAccountCookieAsync()
-        {
-            try
-            {
-                var prompt = new PromptWindow("Add Account", "Enter .ROBLOSECURITY cookie");
-                if (prompt.ShowDialog() == true)
-                {
-                    var cookie = prompt.InputText.Trim();
-                    if (string.IsNullOrWhiteSpace(cookie)) return;
-
-                    // Clean up cookie if it has the full .ROBLOSECURITY= prefix
-                    if (cookie.Contains(".ROBLOSECURITY="))
-                    {
-                        var match = Regex.Match(cookie, @"\.ROBLOSECURITY=([^;]+)");
-                        if (match.Success) cookie = match.Groups[1].Value;
-                    }
-
-                    StatusMessage = "Validating cookie...";
-                    IsLoading = true;
-
-                    var account = await _accountService.LoginWithCookieAsync(cookie);
                     if (account != null)
                     {
-                        StatusMessage = $"Added {account.Username}";
-                        await LoadAccountsAsync();
-                        await LoadGroupsAsync();
+                        if (string.IsNullOrEmpty(account.Group)) account.Group = "Default";
+                        existingUsers.Add(username);
+                        await RunOnUiAsync(() => Accounts.Add(account));
+                        success++;
                     }
-                    else
-                    {
-                        StatusMessage = "Invalid cookie.";
-                    }
+                    else fail++;
                 }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to add account via Cookie");
-                StatusMessage = "Error adding account";
-            }
-            finally
-            {
-                IsLoading = false;
-            }
-        }
 
-        [RelayCommand]
-        private async Task RemoveAccountAsync(Account? account)
-        {
-            if (account == null) return;
-
-            try
-            {
-                await _accountService.DeleteAccountAsync(account.Id);
-                Accounts.Remove(account);
-                StatusMessage = $"Removed account: {account.Username}";
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to remove account {Username}", account.Username);
-                StatusMessage = "Error removing account";
-            }
-        }
-
-        [RelayCommand]
-        private async Task EditAccountAsync(Account? account)
-        {
-            if (account == null) return;
-
-            // TODO: Open Edit Account dialog
-            StatusMessage = "Edit account feature coming soon";
-            await Task.CompletedTask;
-        }
-
-        [RelayCommand]
-        private async Task LaunchAccountAsync(Account? account)
-        {
-            if (account == null) return;
-
-            try
-            {
-                StatusMessage = $"Launching {account.Username}...";
-
-                if (!string.IsNullOrEmpty(PlaceId) && long.TryParse(PlaceId, out var placeId))
+                await RunOnUiAsync(() =>
                 {
-                    var jobIdValue = string.IsNullOrEmpty(JobId) ? null : JobId;
-                    var success = await _gameService.JoinGameAsync(account, placeId, jobIdValue, LaunchData);
-                    if (success)
-                    {
-                        StatusMessage = $"Launched {account.Username}";
-                        
-                        // Wait briefly to detect process and update status
-                        var startWaitUntil = DateTime.Now.AddSeconds(3);
-                        while (DateTime.Now < startWaitUntil)
-                        {
-                            if (await _gameService.IsGameRunningAsync(account))
-                            {
-                                account.Status = AccountStatus.InGame;
-                                if (account.InGameSince == null)
-                                    account.InGameSince = DateTime.Now;
-                                break;
-                            }
-                            await Task.Delay(250);
-                        }
-                        
-                        await UpdateActiveAccountsCountAsync();
-                        UpdateInGameUptimeText();
-                    }
-                    else
-                    {
-                        StatusMessage = $"Failed to launch {account.Username}";
-                    }
-                }
-                else
-                {
-                    var success = await _browserService.LaunchBrowserAsync(account);
-                    StatusMessage = success
-                        ? $"Opened browser for {account.Username}"
-                        : $"Failed to open browser for {account.Username}";
-                }
+                    RebuildGroupsFromAccounts();
+                    UpdateDisplayItems();
+                });
 
-                account.LastUsed = DateTime.Now;
-                await _accountService.UpdateAccountAsync(account);
+                StatusMessage = $"Added {success}, {fail} failed, {skipped} skipped";
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to launch account {Username}", account.Username);
-                StatusMessage = $"Error launching {account.Username}";
+                _logger.LogError(ex, "AddAccountUserPass failed");
+                StatusMessage = "Error adding accounts";
             }
+            finally { IsLoading = false; }
         }
 
         [RelayCommand]
-        private async Task RefreshAccountAsync(Account? account)
+        private async Task RemoveSelectedAccounts()
         {
-            if (account == null) return;
+            if (!SelectedAccounts.Any()) { StatusMessage = "No accounts selected"; return; }
 
             try
             {
-                StatusMessage = $"Refreshing {account.Username}...";
-                await _accountService.RefreshAccountAsync(account);
-                StatusMessage = $"Refreshed {account.Username}";
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to refresh account {Username}", account.Username);
-                StatusMessage = $"Error refreshing {account.Username}";
-            }
-        }
-
-        [RelayCommand]
-        private async Task RefreshAllAccountsAsync()
-        {
-            try
-            {
-                StatusMessage = "Refreshing all accounts...";
                 IsLoading = true;
+                var snapshot = SelectedAccounts.ToList();
+                StatusMessage = $"Removing {snapshot.Count} account(s)...";
 
-                var tasks = Accounts.Select(a => _accountService.RefreshAccountAsync(a));
-                await Task.WhenAll(tasks);
-
-                StatusMessage = "All accounts refreshed";
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to refresh all accounts");
-                StatusMessage = "Error refreshing accounts";
-            }
-            finally
-            {
-                IsLoading = false;
-            }
-        }
-
-        [RelayCommand]
-        private async Task LaunchSelectedAccountsAsync()
-        {
-            if (SelectedAccounts.Count == 0)
-            {
-                StatusMessage = "No accounts selected";
-                return;
-            }
-
-            try
-            {
-                StatusMessage = $"Launching {SelectedAccounts.Count} account(s)...";
-                IsLoading = true;
-
-                // FIX: Use JoinGameAsync instead of the non-existent LaunchGameAsync.
-                // Parse PlaceId once outside the loop — skip launch if invalid.
-                if (!long.TryParse(PlaceId, out var placeId))
-                {
-                    StatusMessage = "Invalid Place ID — cannot launch selected accounts.";
-                    return;
-                }
-
-                var jobIdValue = string.IsNullOrEmpty(JobId) ? null : JobId;
-                var launchDataValue = string.IsNullOrEmpty(LaunchData) ? null : LaunchData;
-
-                var gameService = App.GetService<IGameService>();
-                var delaySeconds = SettingsViewModel?.JoinDelaySeconds ?? 0;
-                if (delaySeconds < 0) delaySeconds = 0;
-                var delayMs = delaySeconds * 1000;
-
-                // Snapshot selection to avoid "Collection was modified" during async operations
-                var selectedSnapshot = SelectedAccounts.ToList();
-
-                // Validate launch data if provided
-                if (!string.IsNullOrEmpty(launchDataValue))
-                {
-                    try
-                    {
-                        var trimmedData = launchDataValue.Trim();
-                        if (!trimmedData.StartsWith("{"))
-                        {
-                            // Simple validation for private server codes (alphanumeric, typical length)
-                            if (trimmedData.Length < 4 || trimmedData.Length > 50 || !trimmedData.All(c => char.IsLetterOrDigit(c)))
-                            {
-                                StatusMessage = "Invalid launch data format. Private server codes should be alphanumeric.";
-                                return;
-                            }
-                            
-                            // Warn about using private server codes with multiple accounts
-                            if (selectedSnapshot.Count > 1)
-                            {
-                                StatusMessage = "Warning: Using private server codes with multiple accounts may cause conflicts. Some accounts may fail to join.";
-                            }
-                        }
-                        else
-                        {
-                            // Try to parse as JSON to validate format
-                            JToken.Parse(trimmedData);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        StatusMessage = "Invalid launch data format. Please check your launch data.";
-                        _logger.LogWarning(ex, "Invalid launch data format: {LaunchData}", launchDataValue);
-                        return;
-                    }
-                }
-                
-                // Ensure each selected account has a valid cookie; auto-login via browser when possible
-                var browserService = App.GetService<IBrowserService>();
-                foreach (var acct in selectedSnapshot)
-                {
-                    if (string.IsNullOrEmpty(acct.SecurityToken) && !string.IsNullOrEmpty(acct.Username) && !string.IsNullOrEmpty(acct.Password))
-                    {
-                        StatusMessage = $"Preparing {acct.Username}...";
-                        var cookie = await browserService.LoginAndGetCookieAsync(acct.Username, acct.Password);
-                        if (!string.IsNullOrEmpty(cookie))
-                        {
-                            acct.SecurityToken = cookie;
-                            acct.IsValid = true;
-                            await _accountService.UpdateAccountAsync(acct);
-                            await Task.Delay(200); // small spacing between logins
-                        }
-                    }
-                }
-
-                var accountsToLaunch = selectedSnapshot.Where(a => !string.IsNullOrEmpty(a.SecurityToken)).ToList();
-                if (accountsToLaunch.Count == 0)
-                {
-                    StatusMessage = "Selected accounts are missing cookies — login first.";
-                    return;
-                }
-                
-                async Task<bool> LaunchOne(Account acct)
-                {
-                    try
-                    {
-                        var ok = await gameService.JoinGameAsync(acct, placeId, jobIdValue, launchDataValue);
-                        if (!ok)
-                        {
-                            await Task.Delay(500);
-                            ok = await gameService.JoinGameAsync(acct, placeId, jobIdValue, launchDataValue);
-                            if (!ok)
-                            {
-                                // Fallback through web to trigger protocol handler
-                                var browserService = App.GetService<IBrowserService>();
-                                ok = await browserService.JoinGameViaWebAsync(acct, placeId, jobIdValue, launchDataValue);
-                            }
-                        }
-                        
-                        if (!ok && !string.IsNullOrEmpty(launchDataValue))
-                        {
-                            _logger.LogWarning("Failed to launch account {Username} with launch data. The launch data may be invalid or expired.", acct.Username);
-                        }
-                        
-                        return ok;
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Exception during launch of account {Username}", acct.Username);
-                        return false;
-                    }
-                }
-
-                // Use sequential launching which is more reliable with roblox-player protocol
-                int successCount = 0;
-                var spacingMs = delayMs == 0 ? 300 : delayMs;
-                foreach (var acct in accountsToLaunch)
-                {
-                    try
-                    {
-                        var launched = await LaunchOne(acct);
-                        if (launched) successCount++;
-
-                        // Wait briefly to let Roblox bootstrapper start before the next launch
-                        var startWaitUntil = DateTime.UtcNow.AddSeconds(3);
-                        while (DateTime.UtcNow < startWaitUntil)
-                        {
-                            bool running = await gameService.IsGameRunningAsync(acct);
-                            if (running)
-                            {
-                                acct.Status = AccountStatus.InGame;
-                                if (acct.InGameSince == null)
-                                    acct.InGameSince = DateTime.Now;
-                                break;
-                            }
-                            await Task.Delay(250);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Failed to launch account {Username}", acct.Username);
-                    }
-                    await Task.Delay(spacingMs);
-                }
-                StatusMessage = $"Launched {successCount} out of {accountsToLaunch.Count} account(s)";
-                
-                // Immediately update sidebar UI
-                await UpdateActiveAccountsCountAsync();
-                UpdateInGameUptimeText();
-
-                foreach (var account in accountsToLaunch)
-                {
-                    account.LastUsed = DateTime.Now;
-                    await _accountService.UpdateAccountAsync(account);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to launch selected accounts");
-                StatusMessage = "Error launching accounts";
-            }
-            finally
-            {
-                IsLoading = false;
-            }
-        }
-
-        [RelayCommand]
-        private async Task OpenBrowserAsync(Account account)
-        {
-            if (account == null)
-            {
-                StatusMessage = "No account provided";
-                return;
-            }
-
-            try
-            {
-                StatusMessage = $"Opening browser for {account.Username}...";
-                IsLoading = true;
-                var browserService = App.GetService<IBrowserService>();
-                var ok = await browserService.LaunchBrowserAsync(account);
-                StatusMessage = ok
-                    ? $"Browser opened for {account.Username}"
-                    : $"Failed to open browser for {account.Username}";
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to open browser for account {Username}", account.Username);
-                StatusMessage = "Error opening browser";
-            }
-            finally
-            {
-                IsLoading = false;
-            }
-        }
-
-        [RelayCommand]
-        private async Task LaunchSelectedAccountAsync()
-        {
-            var selectedAccount = SelectedAccounts.FirstOrDefault(a => a.IsValid);
-            if (selectedAccount == null)
-            {
-                StatusMessage = "No valid account selected to launch";
-                return;
-            }
-
-            try
-            {
-                StatusMessage = $"Launching {selectedAccount.Username}...";
-                IsLoading = true;
-
-                var jobIdValue = string.IsNullOrEmpty(JobId) ? null : JobId;
-                var launchDataValue = string.IsNullOrEmpty(LaunchData) ? null : LaunchData;
-
-                var success = await _gameService.JoinGameAsync(selectedAccount, long.Parse(PlaceId), jobIdValue, launchDataValue);
-                StatusMessage = success
-                    ? $"Launched {selectedAccount.Username}"
-                    : $"Failed to launch {selectedAccount.Username}";
-
-                selectedAccount.LastUsed = DateTime.Now;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to launch selected account");
-                StatusMessage = "Error launching account";
-            }
-            finally
-            {
-                IsLoading = false;
-            }
-        }
-
-        [RelayCommand]
-        private async Task RemoveSelectedAccountsAsync()
-        {
-            var selectedAccounts = SelectedAccounts.ToList();
-            if (selectedAccounts.Count == 0)
-            {
-                StatusMessage = "No accounts selected to remove";
-                return;
-            }
-
-            try
-            {
-                StatusMessage = $"Removing {selectedAccounts.Count} account(s)...";
-                IsLoading = true;
-
-                // Delete accounts one by one using existing DeleteAccountAsync method
-                foreach (var account in selectedAccounts)
+                foreach (var account in snapshot)
                 {
                     await _accountService.DeleteAccountAsync(account.Id);
+                    Accounts.Remove(account);
                 }
-                
-                StatusMessage = $"Removed {selectedAccounts.Count} account(s)";
-                await LoadAccountsAsync();
-                await LoadGroupsAsync();
+
+                UpdateDisplayItems();
+                StatusMessage = $"Removed {snapshot.Count} account(s)";
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to remove selected accounts");
+                _logger.LogError(ex, "RemoveSelectedAccounts failed");
                 StatusMessage = "Error removing accounts";
             }
-            finally
-            {
-                IsLoading = false;
-            }
-        }
-
-
-
-
-        [RelayCommand]
-        private async Task ImportAccountsAsync()
-        {
-            StatusMessage = "Import accounts feature coming soon";
-            await Task.CompletedTask;
+            finally { IsLoading = false; }
         }
 
         [RelayCommand]
-        private async Task BulkImportUserPassAsync()
+        private void CopyUsername(Account? account)
         {
-            try
-            {
-                var bulkImportWindow = new BulkImportWindow();
-                var viewModel = bulkImportWindow.DataContext as ViewModels.BulkImportViewModel;
-                if (viewModel != null)
-                {
-                    viewModel.SetImportType("UserPass");
-                }
-                
-                bulkImportWindow.Owner = Application.Current.MainWindow;
-                bulkImportWindow.ShowDialog();
-                
-                // Refresh accounts after import
-                await LoadAccountsAsync();
-                StatusMessage = "Bulk import completed";
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error opening bulk user:pass import");
-                StatusMessage = "Error opening bulk import";
-            }
+            if (account == null) return;
+            try { Clipboard.SetText(account.Username); StatusMessage = $"Copied username: {account.Username}"; }
+            catch { StatusMessage = "Failed to copy username"; }
         }
 
         [RelayCommand]
-        private async Task BulkImportCookieAsync()
-        {
-            try
-            {
-                var bulkImportWindow = new BulkImportWindow();
-                var viewModel = bulkImportWindow.DataContext as ViewModels.BulkImportViewModel;
-                if (viewModel != null)
-                {
-                    viewModel.SetImportType("Cookie");
-                }
-                
-                bulkImportWindow.Owner = Application.Current.MainWindow;
-                bulkImportWindow.ShowDialog();
-                
-                // Refresh accounts after import
-                await LoadAccountsAsync();
-                StatusMessage = "Bulk cookie import completed";
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error opening bulk cookie import");
-                StatusMessage = "Error opening bulk cookie import";
-            }
-        }
+        private void CopyPassword(Account? account) => StatusMessage = "Copy password not implemented";
 
         [RelayCommand]
-        private async Task ExportAccountsAsync()
-        {
-            StatusMessage = "Export accounts feature coming soon";
-            await Task.CompletedTask;
-        }
-
-        // ── Property change handlers ─────────────────────────────────────────
-
-        partial void OnSelectedGroupChanged(string value) => UpdateDisplayItems();
-
-        partial void OnSearchTextChanged(string value) => UpdateDisplayItems();
-
-
-        // ── Context Menu Commands ───────────────────────────────────────────
+        private void CopyCombo(Account? account) => StatusMessage = "Copy combo not implemented";
 
         [RelayCommand]
-        private async Task CopyUsername(Account? account)
-        {
-            if (account != null)
-                await ClipboardHelper.SetTextAsync(account.Username);
-        }
+        private void CopyProfile(Account? account) => StatusMessage = "Copy profile not implemented";
 
         [RelayCommand]
-        private async Task CopyPassword(Account? account)
+        private void CopyUserId(Account? account)
         {
-            if (account != null)
-            {
-                if (!string.IsNullOrEmpty(account.Password))
-                {
-                    await ClipboardHelper.SetTextAsync(account.Password);
-                    StatusMessage = $"Copied password for {account.Username}";
-                }
-                else
-                {
-                    StatusMessage = "No password stored for this account.";
-                }
-            }
-        }
-
-        [RelayCommand]
-        private async Task CopyCombo(Account? account)
-        {
-            if (account != null)
-            {
-                string pwd = account.Password ?? "";
-                await ClipboardHelper.SetTextAsync($"{account.Username}:{pwd}");
-                if (string.IsNullOrEmpty(pwd))
-                    StatusMessage = $"Warning: Copied {account.Username}: (Empty Password)";
-                else
-                    StatusMessage = $"Copied {account.Username} combo";
-            }
-        }
-
-        [RelayCommand]
-        private async Task CopyProfile(Account? account)
-        {
-            if (account != null)
-                await ClipboardHelper.SetTextAsync($"https://www.roblox.com/users/{account.UserId}/profile");
-        }
-
-        [RelayCommand]
-        private async Task CopyUserId(Account? account)
-        {
-            if (account != null)
-                await ClipboardHelper.SetTextAsync(account.UserId.ToString());
+            if (account == null) return;
+            try { Clipboard.SetText(account.UserId.ToString()); StatusMessage = $"Copied User ID: {account.UserId}"; }
+            catch { StatusMessage = "Failed to copy User ID"; }
         }
 
         [RelayCommand]
         private void SortAlphabetically()
         {
-            var sorted = Accounts.OrderBy(a => a.Username).ToList();
-            Accounts.Clear();
-            foreach (var acc in sorted) Accounts.Add(acc);
-            UpdateDisplayItems();
-            StatusMessage = "Sorted alphabetically";
-        }
-
-        [RelayCommand]
-        private async Task QuickLogInAsync(Account? account)
-        {
-            if (account == null) return;
-            
-            var prompt = new BloxManager.Views.PromptWindow("Quick Log In", "Enter the 6-character code:");
-            if (prompt.ShowDialog() == true && !string.IsNullOrWhiteSpace(prompt.InputText))
+            try
             {
-                StatusMessage = "Approving quick login...";
-                bool success = await _browserService.ApproveQuickLoginAsync(account, prompt.InputText.Trim());
-                StatusMessage = success ? "Quick login approved!" : "Failed to approve quick login.";
+                var sorted = Accounts.OrderBy(a => a.Username).ToList();
+                Accounts.Clear();
+                foreach (var a in sorted) Accounts.Add(a);
+                UpdateDisplayItems();
+                StatusMessage = "Accounts sorted alphabetically";
             }
+            catch { StatusMessage = "Failed to sort accounts"; }
         }
 
         [RelayCommand]
-        private void Help()
-        {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = "https://github.com/JakeBx99/Roblox-Account-Manager",
-                UseShellExecute = true
-            });
-        }
+        private void QuickLogInAsync(Account? account) => StatusMessage = "Quick login not implemented";
 
         [RelayCommand]
-        public async Task EditDescriptionAsync(Account? account)
+        private void CreateGroup()
         {
-            if (account == null) return;
-
-            var prompt = new BloxManager.Views.PromptWindow("Edit Description", "Enter a new description for this account:", account.Description);
-            if (prompt.ShowDialog() == true)
+            try
             {
-                account.Description = prompt.InputText;
-                await _accountService.UpdateAccountAsync(account);
-                StatusMessage = $"Updated description for {account.Username}";
-            }
-        }
+                var prompt = new BloxManager.Views.PromptWindow("Create Group", "Enter a name for the new group:");
+                if (prompt.ShowDialog() != true || string.IsNullOrWhiteSpace(prompt.InputText)) return;
 
-        // Password editing removed in favor of automatic tracking during login.
-
-
-        [RelayCommand]
-        private async Task CreateGroupAsync(Account? account)
-        {
-            var prompt = new BloxManager.Views.PromptWindow("Create Group", "Enter a name for the new group:");
-            if (prompt.ShowDialog() == true && !string.IsNullOrWhiteSpace(prompt.InputText))
-            {
                 var newGroup = prompt.InputText.Trim();
-                if (!Groups.Contains(newGroup))
-                {
-                    Groups.Add(newGroup);
-                    // Optionally, if an account was right-clicked, immediately move it to the new group
-                    if (account != null)
-                    {
-                        account.Group = newGroup;
-                        await _accountService.UpdateAccountAsync(account);
-                        UpdateDisplayItems();
-                    }
+                if (Groups.Contains(newGroup)) { StatusMessage = "Group already exists."; return; }
 
-                    StatusMessage = $"Created group: {newGroup}";
-                }
-                else
-                {
-                    StatusMessage = "Group already exists.";
-                }
+                EnsureGroupExists(newGroup);
+                SyncAvailableGroupsForMove();
+                UpdateDisplayItems();
+                StatusMessage = $"Created group: {newGroup}";
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "CreateGroup failed");
+                StatusMessage = "Error creating group";
             }
         }
 
         [RelayCommand]
-        private async Task MoveAccountToGroupAsync(object parameter)
+        private async Task MoveAccountToGroup(object? parameter)
         {
-            // The command parameter here will be an object array from the MultiParamConverter containing {DataContext, GroupName}
-            // However, due to the way ContextMenu item templating works, it's often easier to just track the selected items.
-            // But since this receives the parameters:
-            if (parameter is object[] values && values.Length == 2)
+            try
             {
+                if (parameter is not object[] values || values.Length < 2) return;
                 var groupName = values[1] as string;
-                var dataContext = values[0] as MainViewModel;
+                if (string.IsNullOrEmpty(groupName) || !SelectedAccounts.Any()) return;
 
-                // Move all selected accounts to this group
-                if (groupName != null && SelectedAccounts.Any())
+                foreach (var acc in SelectedAccounts.ToList())
                 {
-                    foreach (var acc in SelectedAccounts)
-                    {
-                        acc.Group = groupName;
-                        await _accountService.UpdateAccountAsync(acc);
-                    }
-                    UpdateDisplayItems();
-                    StatusMessage = $"Moved {SelectedAccounts.Count} account(s) to {groupName}";
+                    acc.Group = groupName;
+                    await _accountService.UpdateAccountAsync(acc);
                 }
+
+                EnsureGroupExists(groupName);
+                UpdateDisplayItems();
+                StatusMessage = $"Moved {SelectedAccounts.Count} account(s) to {groupName}";
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "MoveAccountToGroup failed");
+                StatusMessage = "Error moving accounts";
             }
         }
 
         [RelayCommand]
         public void ToggleGroupExpansion(AccountGroup? group)
         {
-            if (group != null)
-            {
-                System.Diagnostics.Debug.WriteLine($"ToggleGroupExpansion called for group: {group.Name}, current IsExpanded: {group.IsExpanded}");
-                
-                group.IsExpanded = !group.IsExpanded;
-                
-                System.Diagnostics.Debug.WriteLine($"After toggle - new IsExpanded: {group.IsExpanded}");
-                
-                UpdateDisplayItems();
-                
-                System.Diagnostics.Debug.WriteLine("UpdateDisplayItems called");
-            }
-            else
-            {
-                System.Diagnostics.Debug.WriteLine("ToggleGroupExpansion called with null group");
-            }
+            if (group == null) return;
+            group.IsExpanded = !group.IsExpanded;
+            UpdateDisplayItems();
+            StatusMessage = $"Group '{group.Name}' {(group.IsExpanded ? "expanded" : "collapsed")}";
         }
 
         [RelayCommand]
         public async Task DeleteGroupAsync(AccountGroup? group)
         {
-            if (group == null) return;
-            
-            // Prevent deletion of the Default group
-            if (group.Name == "Default")
-            {
-                StatusMessage = "Cannot delete the Default group";
-                return;
-            }
+            if (group == null || group.Name == "Default") return;
 
             try
             {
-                // Move all accounts in this group to "Default"
-                foreach (var account in group.Accounts)
+                foreach (var account in Accounts.Where(a => a.Group == group.Name).ToList())
                 {
                     account.Group = "Default";
                     await _accountService.UpdateAccountAsync(account);
                 }
 
-                // Save all account changes
-                await _accountService.SaveAccountsAsync();
-
-                // Remove the group from the Groups collection
                 Groups.Remove(group.Name);
-                
-                // Update display items to reflect the changes
+                _groupCache.Remove(group.Name);
+                AvailableGroupsForMove.Remove(group.Name);
                 UpdateDisplayItems();
                 StatusMessage = $"Deleted group: {group.Name}";
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                _logger.LogError("Failed to delete group {GroupName}", group.Name);
+                _logger.LogError(ex, "DeleteGroupAsync failed");
                 StatusMessage = "Error deleting group";
             }
         }
@@ -1416,7 +1077,6 @@ namespace BloxManager.ViewModels
 
             try
             {
-                // Prevent renaming to "Default" or existing group names
                 if (newName == "Default" || Groups.Contains(newName))
                 {
                     StatusMessage = "Group name already exists or cannot be 'Default'";
@@ -1424,35 +1084,61 @@ namespace BloxManager.ViewModels
                 }
 
                 var oldName = group.Name;
-                
-                // Update all accounts in this group to use the new name
+
                 foreach (var account in Accounts.Where(a => a.Group == oldName))
                 {
                     account.Group = newName;
                     _ = _accountService.UpdateAccountAsync(account);
                 }
 
-                // Update the Groups collection
-                var index = Groups.IndexOf(oldName);
-                if (index >= 0)
-                {
-                    Groups[index] = newName;
-                }
+                var idx = Groups.IndexOf(oldName);
+                if (idx >= 0) Groups[idx] = newName;
 
-                // Update the AccountGroup name
+                _groupCache.Remove(oldName);
                 group.Name = newName;
-                
-                // Update display items
+                _groupCache[newName] = group;
+
+                SyncAvailableGroupsForMove();
                 UpdateDisplayItems();
-                StatusMessage = $"Renamed group from '{oldName}' to '{newName}'";
-                
-                // Save the changes
-                _ = SavePersistentGroupsAsync();
+                StatusMessage = $"Renamed group '{oldName}' → '{newName}'";
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                _logger.LogError("Failed to rename group from {OldName} to {NewName}", group.Name, newName);
+                _logger.LogError(ex, "EditGroupName failed ({Old} → {New})", group?.Name, newName);
                 StatusMessage = "Error renaming group";
+            }
+        }
+
+        // ── UI thread helper ──────────────────────────────────────────────────
+
+        /// <summary>Marshals an action onto the WPF dispatcher. Safe to call from any thread.</summary>
+        private static Task RunOnUiAsync(Action action)
+        {
+            if (Application.Current?.Dispatcher == null) return Task.CompletedTask;
+            if (Application.Current.Dispatcher.CheckAccess())
+            {
+                action();
+                return Task.CompletedTask;
+            }
+            return Application.Current.Dispatcher.InvokeAsync(action).Task;
+        }
+
+        // ── Compatibility stubs ───────────────────────────────────────────────
+        public Task ReorderItemsAsync(object sender, object e) => Task.CompletedTask;
+
+        // ── Cleanup ───────────────────────────────────────────────────────
+        public void Dispose()
+        {
+            try
+            {
+                _presenceRefreshCts?.Cancel();
+                _presenceRefreshCts?.Dispose();
+                _uptimeCts?.Cancel();
+                _uptimeCts?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during disposal");
             }
         }
     }
